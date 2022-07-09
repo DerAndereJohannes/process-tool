@@ -6,42 +6,8 @@ export const MultiStore = writable(false);
 
 
 export const EntityStore = writable([
-    {
-        id: 1,
-        selected: false,
-        metadata: {
-            name: "O2C Log",
-            type: "ocel",
-            "type-long": "Object-Centric Event Log",
-            "time-imported": "2022-06-17T10:10:17Z", 
-            "file-size": 23893,
-            "file-type": "jsonocel"
-        },
-        instancedata: {
-            "rust-id": 1231212,
-            "events-count": 123,
-            "objects-count": 123
-        },
-    },
-    {
-        id: 2,
-        selected: false,
-        metadata: {
-            name: "Order Management Log",
-            type: "ocel",
-            "type-long": "Object-Centric Event Log",
-            "time-imported": "2022-06-17T10:10:17Z", 
-            "file-size": 23893,
-            "file-type": "jsonocel"
-        },
-        instancedata: {
-            "rust-id": 1244232,
-            "events-count": 123,
-            "objects-count": 123
-        },
-    },
-    {
-        id: 3,
+        {
+        id: 3123123,
         selected: false,
         metadata: {
             name: "Directed Graph 1",
@@ -58,7 +24,7 @@ export const EntityStore = writable([
         },
     },
     {
-        id: 4,
+        id: 4123123,
         selected: false,
         metadata: {
             name: "Data Table 1",

@@ -1,7 +1,9 @@
+
 <script lang="ts">
   import EntitySpace from './lib/EntitySpace.svelte'
   import WorkSpace from './lib/WorkSpace.svelte'
 </script>
+
 
 <div class="main-screen">
     <!-- Entity Selection -->

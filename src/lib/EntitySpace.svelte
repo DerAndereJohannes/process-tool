@@ -1,5 +1,29 @@
-<script>
-    import EntityList from './EntityList.svelte'
+<script lang=ts>
+    import EntityList from './EntityList.svelte';
+    import { open } from "@tauri-apps/api/dialog";
+    import { invoke } from '@tauri-apps/api/tauri';
+
+    import { EntityStore } from '../stores';
+
+    const fileselect = () => {
+        let properties = {
+            defaultpath: '~/',
+            directory: false,
+            filters: [{extensions: ['jsonocel', 'gexf'], name: "*"}]
+        };
+        open(properties).then((path) => {
+            /* import file */
+            invoke("import_entity", { filepath: path }).then((id) => {
+                                                                invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
+                                                                message['id'] = message['metadata']['rust-id']; 
+                                                                message['selected'] = false;
+                                                                EntityStore.update(n => [...n, Object(message)]);
+                                                                console.log(message)})
+                                                                                                                       .catch(((err) => console.log(err)));})
+                                                       .catch((err) => console.log(err));
+        });
+
+    };
 </script>
 
 <div class="flex-container column-area">
@@ -11,7 +35,7 @@
     </div>
     <div class="flex-item">
         <hr>
-        <button class="contrast outline button-margin">Import</button>
+        <button class="contrast outline button-margin" on:click={fileselect}>Import</button>
     </div>
 </div>
 
