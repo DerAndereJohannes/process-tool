@@ -21,6 +21,7 @@
                                                                 console.log(message)})
                                                                                                                        .catch(((err) => console.log(err)));})
                                                        .catch((err) => console.log(err));
+            invoke("get_plugins").then((plugs) => {console.log(plugs)});
         });
 
     };

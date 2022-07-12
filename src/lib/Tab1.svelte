@@ -1,5 +1,12 @@
 <script lang="ts">
     import {EntityStore} from '../stores';
+    import { save } from '@tauri-apps/api/dialog';
+
+    const exportfile = () => {
+        save().then((path) => {
+            console.log(path);
+        });
+    }
 
     $: entity = $EntityStore.find((item) => item.selected);
 </script>
@@ -12,7 +19,7 @@
         <h2>{entity.metadata["type-long"]}</h2>
     </hgroup>
     <div class="title-item">
-        <button class="contrast outline" style="width: 100px; float: right;">Export</button>
+        <button class="contrast outline" style="width: 100px; float: right;" on:click={exportfile}>Export</button>
     </div>
     </div>
     <hr>

@@ -20,6 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "1.0", features = ["api-all"] }
 pmrs = { path = "../../rust-ocel", version = "0.1.0" }
+strum = { version = "0.24", features = ["derive"] }
 
 [features]
 # by default Tauri runs in production mode

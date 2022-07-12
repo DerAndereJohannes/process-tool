@@ -3,11 +3,13 @@
   windows_subsystem = "windows"
 )]
 
-use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path};
+use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, hash::Hash};
 use pmrs::objects::{ocel::importer::import_ocel, ocdg::{Ocdg, generate_ocdg, Relations}};
+use serde::{Serialize, Deserialize};
+use strum::{IntoEnumIterator, EnumIter};
 use pmrs::objects::ocel::Ocel;
 use std::str::FromStr;
-use serde_json::{Value, Map};
+use serde_json::{Value, Map, json};
 use std::sync::Mutex;
 use std::fs;
 use chrono::Local;
@@ -24,15 +26,20 @@ enum Entity {
     Ocdg(OcdgEntity)
 }
 
+#[derive(Debug, EnumIter)]
 enum Plugins {
-    GenerateOcdg
+    GenerateOcdg,
+    ApplyToOcel
 }
 
+#[derive(Serialize, Deserialize)]
 struct Plugin {
     name: String,
-    input: Map<String, (usize, usize)>,
-    output: Map<String, (usize, usize)>,
-    parameters: Vec<Map<String, Value>>
+    #[serde(alias = "type", rename(serialize = "type"))]
+    plugin_type: String,
+    input: HashMap<String, Value>,
+    output: HashMap<String, Value>,
+    parameters: Vec<HashMap<String, Value>>
 
 }
 
@@ -44,10 +51,10 @@ fn activate_plugin(plugin: Plugins, inputs: HashMap<String, Value>, entitystate:
                 let iocdg: usize = inputs[&"Ocel".to_string()].as_u64().unwrap().try_into().unwrap();
                 
                 let mut state = entitystate.0.lock().unwrap();
-                if let Entity::Ocel(ent) = state[&iocdg] {
-                    let log: Ocel = ent.object;
+                if let Entity::Ocel(ent) = &state[&iocdg] {
+                    let log = &ent.object;
                     let relations: Vec<Relations> = inputs[&"Relations".to_string()].as_array().unwrap().iter().map(|i| Relations::from_str(&i.to_string()).unwrap()).collect();
-                    let ocdg: Ocdg = generate_ocdg(&log, &relations);
+                    let ocdg: Ocdg = generate_ocdg(log, &relations);
                     let id = get_new_id();
                     let mut metadata = Map::<String, Value>::new();
                     let mut instancedata = Map::<String, Value>::new();
@@ -61,8 +68,30 @@ fn activate_plugin(plugin: Plugins, inputs: HashMap<String, Value>, entitystate:
                 
             }
             Ok("".to_string())
-        }
+        },
+        _ => Err("plugin does not exist".to_string())
     }
+}
+
+
+fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
+    match plugin {
+        Plugins::GenerateOcdg => {
+            let plug = r#"{
+                "name": "Generate Ocdg",
+                "type": "Generation",
+                "input": {"ocel": 1},
+                "output": {"ocdg": 1},
+                "parameters": []
+            }"#;
+            let mut gen_ocdg: Plugin = serde_json::from_str(plug).unwrap();
+            let parameters: HashMap<String, Value> = HashMap::from([("multichoice:Relations".to_string(), serde_json::to_value(Relations::iter().map(|rel| format!("{:?}", rel)).collect::<Vec<String>>()).unwrap()), ("header".to_string(), Value::String("General".to_string()))]);
+            gen_ocdg.parameters.push(parameters);
+            return Some(gen_ocdg);
+        },
+        _ => None
+    }
+
 }
 
 impl Entity {
@@ -163,10 +192,15 @@ fn get_instance_info(instance_id: usize, entitystate: tauri::State<EntityState>)
 }
 
 #[tauri::command]
-fn get_plugins() -> Map<String, Value> {
-    for plugin in &Plugins {
+fn get_plugins() -> Vec<Plugin> {
+    let mut plugvec = vec![];
+    for plugin in Plugins::iter() {
+        if let Some(plug) = get_plugin_info(plugin) {
+            plugvec.push(plug)
+        }
+    };
 
-    }
+    plugvec
 }
 
 
@@ -175,7 +209,7 @@ fn main() {
   let context = tauri::generate_context!();
   tauri::Builder::default()
     .manage(EntityState(Default::default()))
-    .invoke_handler(tauri::generate_handler![import_entity, get_instance_info])
+    .invoke_handler(tauri::generate_handler![import_entity, get_instance_info, get_plugins])
     .menu(tauri::Menu::os_default(&context.package_info().name))
     .run(context)
     .expect("error while running tauri application");

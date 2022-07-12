@@ -50,6 +50,13 @@ export const TemplateEntityStore = writable({
             type: "ocel"
         }
     },
+    ocdg: {
+        metadata: {
+            name: "Object-Centric Directed Graph",
+            type: "ocdg"
+        }
+    },
+
     graph: {
         metadata: {
             name: "New Graph Entity",
@@ -73,9 +80,11 @@ export const PluginStore = writable([
         name: "Create Object-Centric Directed Graph",
         input: {"ocel": 1},
         output: {"graph": 1},
-        parameters: {
+        parameters: [{
+            header: "nice",
+            shutter: "true",
             relations: "Object"
-        }
+        }]
     },
     {
         id: 2,
@@ -84,7 +93,7 @@ export const PluginStore = writable([
         name: "Combine Data Tables",
         input: {"table": [2, Number.MAX_SAFE_INTEGER]},
         output: {"table": 1},
-        parameters: {"Delete Input": "Boolean"}
+        parameters: [{"header": "nice2", "Delete Input": "Boolean"}]
     },
     {
         id: 3,
@@ -93,36 +102,6 @@ export const PluginStore = writable([
         name: "Extract Feature",
         input: {"ocel": 1, "graph": [0, 1]},
         output: {"table": 1},
-        parameters: {name: "Object-Type Count"}
+        parameters: [{"header": "nice3", name: "Object-Type Count"}]
     },
-    {
-        id: 4,
-        type: "Generation",
-        selected: false,
-        name: "Create Object-Centric Directed Graph",
-        input: {"ocel": 1},
-        output: {"graph": 1},
-        parameters: {
-            relations: "Object"
-        }
-    },
-    {
-        id: 5,
-        type: "Combination",
-        selected: false,
-        name: "Combine Data Tables",
-        input: {"table": [2, Number.MAX_SAFE_INTEGER]},
-        output: {"table": 1},
-        parameters: {"Delete Input": ["Boolean"]}
-    },
-    {
-        id: 6,
-        type: "Extraction",
-        selected: false,
-        name: "Extract Feature",
-        input: {"ocel": 1, "graph": [0, 1]},
-        output: {"table": 1},
-        parameters: {name: "Object-Type Count"}
-    }
-
 ]);

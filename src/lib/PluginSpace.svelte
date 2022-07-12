@@ -2,8 +2,16 @@
     import PluginList from './PluginList.svelte';
     import EntityCard from './EntityCard.svelte';
     import { EntityStore, PluginStore, TemplateEntityStore } from '../stores';
+    import { invoke } from '@tauri-apps/api/tauri';
     
     let entities;
+
+    
+    invoke("get_plugins").then((plugs) => {
+        plugs["selected"] = false;
+        /* PluginStore.update(n => n.concat(Object(plugs))) */
+        PluginStore.update(_ => Object(plugs));
+    })
 
     $: entities = $EntityStore.filter((item: any) => item.selected);
     $: selected = $PluginStore.find((item: any) => item.selected);
@@ -35,6 +43,28 @@
         }
 
         return typeCounter;
+    }
+
+    const select_all_click = (j: number, multiname: string) => {
+        let callerid: string = `${j}:${multiname}`;
+
+        let caller = document.getElementById(callerid) as HTMLInputElement | null;
+        let responders = document.querySelectorAll(`[id^="${callerid}"]`);
+
+        if (caller.checked) {
+            responders.forEach((ele: HTMLInputElement) => {
+                if (ele != caller) {
+                    ele.checked = true;
+                }
+            });
+        } else {
+            responders.forEach((ele: HTMLInputElement) => {
+                if (ele != caller) {
+                    ele.checked = false;
+                }
+            });
+        }
+        
     }
 
 </script>
@@ -72,13 +102,34 @@
         <h2>Parameters<hr class="mt-0"></h2>
         <article>
         <ul>
-        {#each Object.entries(selected.parameters) as [param, type]}
-            {#if type instanceof Array}
-                <li><b>{param}:</b> Type of Entity</li>
-            {:else if type instanceof Object}
-                <li><b>{param}:</b> between {type[0]} and {type[1]}</li>
+        {#each selected.parameters as section, j }
+            {#if !("shutter" in section)}
+                <details open>
+                    <summary>{section["header"]}</summary>
+                    {#each Object.entries(section) as [param, choices]}
+                        {#if param.split(":")[0] == "multichoice"}
+                        <fieldset>
+                            <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                            <label for="{j}:{param}">
+                                <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
+                            </label>
+                            {#each choices as choice}
+                                <label for="{j}:{param}:{choice}">
+                                    <input type="checkbox" id="{j}:{param}:{choice}" name={choice}> {choice}
+                                </label>
+                            {/each}
+                        </fieldset>
+                        {/if}
+                        
+                    {/each}
+
+                </details>
+
             {:else}
-                <li><b>{param}:</b> {type}</li>
+                <details>
+                    <summary>{section["header"]}</summary>
+                </details>
+
             {/if}
         {/each}
         </ul>
