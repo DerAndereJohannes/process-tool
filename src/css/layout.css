@@ -8,7 +8,8 @@ html, body {
 }
 
 .column-area {
-    padding: calc(var(--spacing)) calc(var(--spacing));
+    /* padding: calc(var(--spacing)) calc(var(--spacing)); */
+    padding: 0;
     border-radius: var(--border-radius);
     background: var(--code-background-color);
     font-size: 87.5%;

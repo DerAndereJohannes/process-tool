@@ -76,6 +76,8 @@ export const PluginStore = writable([
     {
         id: 1,
         type: "Generation",
+        enumid: "o",
+        description: "o",
         selected: false,
         name: "Create Object-Centric Directed Graph",
         input: {"ocel": 1},
@@ -89,6 +91,8 @@ export const PluginStore = writable([
     {
         id: 2,
         type: "Combination",
+        enumid: "o",
+        description: "o",
         selected: false,
         name: "Combine Data Tables",
         input: {"table": [2, Number.MAX_SAFE_INTEGER]},
@@ -98,6 +102,8 @@ export const PluginStore = writable([
     {
         id: 3,
         type: "Extraction",
+        enumid: "o",
+        escription: "o",
         selected: false,
         name: "Extract Feature",
         input: {"ocel": 1, "graph": [0, 1]},

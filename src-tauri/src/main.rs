@@ -3,13 +3,13 @@
   windows_subsystem = "windows"
 )]
 
-use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, hash::Hash};
+use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path};
 use pmrs::objects::{ocel::importer::import_ocel, ocdg::{Ocdg, generate_ocdg, Relations}};
 use serde::{Serialize, Deserialize};
-use strum::{IntoEnumIterator, EnumIter};
+use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
 use std::str::FromStr;
-use serde_json::{Value, Map, json};
+use serde_json::{Value, Map};
 use std::sync::Mutex;
 use std::fs;
 use chrono::Local;
@@ -26,7 +26,7 @@ enum Entity {
     Ocdg(OcdgEntity)
 }
 
-#[derive(Debug, EnumIter)]
+#[derive(Debug, EnumIter, EnumString)]
 enum Plugins {
     GenerateOcdg,
     ApplyToOcel
@@ -35,6 +35,8 @@ enum Plugins {
 #[derive(Serialize, Deserialize)]
 struct Plugin {
     name: String,
+    description: String,
+    enumid: String,
     #[serde(alias = "type", rename(serialize = "type"))]
     plugin_type: String,
     input: HashMap<String, Value>,
@@ -43,34 +45,47 @@ struct Plugin {
 
 }
 
+#[derive(Serialize, Deserialize)]
+struct PluginParameters {
+    enumid: String,
+    inputs: HashMap<String, Vec<String>>,
+    parameters: Vec<HashMap<String, Value>>
+
+}
+
 #[tauri::command]
-fn activate_plugin(plugin: Plugins, inputs: HashMap<String, Value>, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+    let plugin: Plugins = Plugins::from_str(&params.enumid).unwrap();
     match plugin {
         Plugins::GenerateOcdg => {
-            if inputs.contains_key(&"Ocel".to_string()) && inputs.contains_key(&"Relations".to_string()) {
-                let iocdg: usize = inputs[&"Ocel".to_string()].as_u64().unwrap().try_into().unwrap();
+                // get the first ocel log in inputs
+                let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
                 
                 let mut state = entitystate.0.lock().unwrap();
-                if let Entity::Ocel(ent) = &state[&iocdg] {
+                if let Entity::Ocel(ent) = &state[&iocel] {
                     let log = &ent.object;
-                    let relations: Vec<Relations> = inputs[&"Relations".to_string()].as_array().unwrap().iter().map(|i| Relations::from_str(&i.to_string()).unwrap()).collect();
+                    let relation_array = &params.parameters[0]["multichoice:Relations"];
+                    let relations: Vec<Relations> = relation_array.as_array().unwrap().iter().map(|i| Relations::from_str(i.as_str().unwrap()).unwrap()).collect();
                     let ocdg: Ocdg = generate_ocdg(log, &relations);
                     let id = get_new_id();
                     let mut metadata = Map::<String, Value>::new();
                     let mut instancedata = Map::<String, Value>::new();
+                    instancedata.entry("Relations".to_string()).or_insert(relation_array.to_owned());
                     metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
                     metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocdg {:?}", &id).to_string()));
                     metadata.entry("time-imported".to_string()).or_insert(Value::String(Local::now().to_string()));
+                    metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string()));
+                    metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
                     let new_ocdg = OcdgEntity {id, object: ocdg, metadata, instancedata};
                     state.entry(id).or_insert(Entity::Ocdg(new_ocdg)); 
+                    return Ok(id.to_string());
 
                 }
                 
-            }
-            Ok("".to_string())
         },
-        _ => Err("plugin does not exist".to_string())
+        _ => {return Err("plugin does not exist".to_string());}
     }
+    Err("Plugin has an issue".to_string())
 }
 
 
@@ -79,6 +94,8 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
         Plugins::GenerateOcdg => {
             let plug = r#"{
                 "name": "Generate Ocdg",
+                "enumid": "GenerateOcdg",
+                "description": "Generate an Object-Centric Directed Graph with specified relations.",
                 "type": "Generation",
                 "input": {"ocel": 1},
                 "output": {"ocdg": 1},
@@ -209,7 +226,7 @@ fn main() {
   let context = tauri::generate_context!();
   tauri::Builder::default()
     .manage(EntityState(Default::default()))
-    .invoke_handler(tauri::generate_handler![import_entity, get_instance_info, get_plugins])
+    .invoke_handler(tauri::generate_handler![import_entity, get_instance_info, get_plugins, activate_plugin])
     .menu(tauri::Menu::os_default(&context.package_info().name))
     .run(context)
     .expect("error while running tauri application");

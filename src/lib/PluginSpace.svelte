@@ -67,6 +67,47 @@
         
     }
 
+    const activate_plugin = () => {
+        /* deep copy */
+        let values = {"enumid": selected.enumid, "inputs": {}, "parameters": []};
+        /* inputs */
+        Object.keys(selected.input).forEach((otype: string) => {
+            /* get all fitting to object type TODO: only select as many as there are available inputs*/
+            let fitting_obj = entities.filter((item: any) => item.metadata["type"] == otype).map((item: any) => item.metadata["rust-id"]);
+            values.inputs[otype] = fitting_obj; 
+        });
+
+        /* parameters */
+        selected.parameters.forEach((section: object, index: number) => {
+            values.parameters[index] = {};
+            Object.keys(section).forEach((param: string) => {
+                if (param.includes(":")) {
+                    let input_type = param.split(":")[0];
+                    let base_id = `${index}:${param}`;
+                    let elements = [...document.querySelectorAll(`[id^="${base_id}"]`)];
+                    let param_input: string|number|string[];
+
+                    /* do something different depending on the data type */
+                    if (input_type == "multichoice") {
+                        param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
+                    }
+
+                    values.parameters[index][param] = param_input;
+                }
+            
+            });
+        });
+
+        /* activate the plugin!!! */
+        invoke("activate_plugin", { params: values }).then((id: number) => {
+            invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
+                                                                message['id'] = message['metadata']['rust-id']; 
+                                                                message['selected'] = false;
+                                                                EntityStore.update(n => [...n, Object(message)]);
+                                                                console.log(message)})
+                                                  }).catch((error: string) => console.log(error));
+    }
+
 </script>
 
 
@@ -79,12 +120,20 @@
 
     <div class="container no-scroll">
     {#if selected}
-        <h1>{selected.name}<hr class="mt-0"></h1>
+        <div class="title-container">
+            <div class="title-item">
+                <h1>{selected.name}<hr class="mt-0"></h1>
+            </div>
+            <div class="title-item">
+                <button class="contrast outline" style="width: 120px; float: right;" on:click={activate_plugin}>Execute</button>
+            </div>
+        </div>
+        <p>{selected.description}</p>
         <h2>Input<hr class="mt-0"></h2>
         <div class="grid">
         {#each Object.entries(selected.input) as [type, quantity]}
             <div>
-                <article>
+                <article class="article-no-margin">
                 <hgroup>
                     <h4>{type}: {entitiesCount[type] ? entitiesCount[type] : 0} Selected</h4>
                     <h5>{translateQuantity(quantity)}</h5>
@@ -100,7 +149,7 @@
         </div>
         
         <h2>Parameters<hr class="mt-0"></h2>
-        <article>
+        <article class="article-no-margin">
         <ul>
         {#each selected.parameters as section, j }
             {#if !("shutter" in section)}
@@ -135,7 +184,7 @@
         </ul>
         </article>
         <h2>Output<hr class="mt-0"></h2>
-        <article>
+        <article class="article-no-margin">
         {#each Object.entries(selected.output) as [type, quantity]}
             <div class="output-format">
                 <EntityCard entity={$TemplateEntityStore[type]} /> <h5 class="output-quantity">x{quantity}</h5>
@@ -186,6 +235,32 @@
 
 .title-margin {
     margin-bottom: 10px;
+}
+
+.title-container {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-content: stretch;
+    align-items: stretch;
+    }
+
+.title-item:nth-child(1) {
+    order: 0;
+    flex: 8 1 auto;
+    align-self: auto;
+    margin-bottom: 0px;
+    }
+
+.title-item:nth-child(2) {
+    order: 1;
+    flex: 1 1 auto;
+    align-content: auto;
+    } 
+
+.article-no-margin {
+    margin: 0;
 }
 
 </style>
