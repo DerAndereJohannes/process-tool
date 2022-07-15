@@ -72,42 +72,4 @@ export const TemplateEntityStore = writable({
 });
 
 
-export const PluginStore = writable([
-    {
-        id: 1,
-        type: "Generation",
-        enumid: "o",
-        description: "o",
-        selected: false,
-        name: "Create Object-Centric Directed Graph",
-        input: {"ocel": 1},
-        output: {"graph": 1},
-        parameters: [{
-            header: "nice",
-            shutter: "true",
-            relations: "Object"
-        }]
-    },
-    {
-        id: 2,
-        type: "Combination",
-        enumid: "o",
-        description: "o",
-        selected: false,
-        name: "Combine Data Tables",
-        input: {"table": [2, Number.MAX_SAFE_INTEGER]},
-        output: {"table": 1},
-        parameters: [{"header": "nice2", "Delete Input": "Boolean"}]
-    },
-    {
-        id: 3,
-        type: "Extraction",
-        enumid: "o",
-        escription: "o",
-        selected: false,
-        name: "Extract Feature",
-        input: {"ocel": 1, "graph": [0, 1]},
-        output: {"table": 1},
-        parameters: [{"header": "nice3", name: "Object-Type Count"}]
-    },
-]);
+export const PluginStore = writable([]);

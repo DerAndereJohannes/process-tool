@@ -5,9 +5,11 @@
 
 use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path};
 use pmrs::objects::{ocel::importer::import_ocel, ocdg::{Ocdg, generate_ocdg, Relations}};
+use polars::prelude::{Series, DataFrame, Result as ResultPolars, NamedFrom};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
+use pmrs::objects::ocel::validator::validate_ocel_verbose;
 use std::str::FromStr;
 use serde_json::{Value, Map};
 use std::sync::Mutex;
@@ -23,17 +25,19 @@ fn get_new_id() -> usize {
 
 enum Entity {
     Ocel(OcelEntity),
-    Ocdg(OcdgEntity)
+    Ocdg(OcdgEntity),
+    Table(TableEntity)
 }
 
 #[derive(Debug, EnumIter, EnumString)]
 enum Plugins {
     GenerateOcdg,
-    ApplyToOcel
+    ValidateOcel
 }
 
 #[derive(Serialize, Deserialize)]
 struct Plugin {
+    id: usize,
     name: String,
     description: String,
     enumid: String,
@@ -56,6 +60,13 @@ struct PluginParameters {
 #[tauri::command]
 fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntityState>) -> Result<String, String> {
     let plugin: Plugins = Plugins::from_str(&params.enumid).unwrap();
+    let id = get_new_id();
+    let mut metadata = Map::<String, Value>::new();
+    let mut instancedata = Map::<String, Value>::new();
+    metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
+    metadata.entry("time-created".to_string()).or_insert(Value::String(Local::now().to_string()));
+
+
     match plugin {
         Plugins::GenerateOcdg => {
                 // get the first ocel log in inputs
@@ -67,25 +78,46 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                     let relation_array = &params.parameters[0]["multichoice:Relations"];
                     let relations: Vec<Relations> = relation_array.as_array().unwrap().iter().map(|i| Relations::from_str(i.as_str().unwrap()).unwrap()).collect();
                     let ocdg: Ocdg = generate_ocdg(log, &relations);
-                    let id = get_new_id();
-                    let mut metadata = Map::<String, Value>::new();
-                    let mut instancedata = Map::<String, Value>::new();
                     instancedata.entry("Relations".to_string()).or_insert(relation_array.to_owned());
-                    metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
                     metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocdg {:?}", &id).to_string()));
-                    metadata.entry("time-imported".to_string()).or_insert(Value::String(Local::now().to_string()));
                     metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string()));
                     metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
                     let new_ocdg = OcdgEntity {id, object: ocdg, metadata, instancedata};
                     state.entry(id).or_insert(Entity::Ocdg(new_ocdg)); 
-                    return Ok(id.to_string());
 
                 }
-                
         },
-        _ => {return Err("plugin does not exist".to_string());}
+        Plugins::ValidateOcel => {
+            let mut state = entitystate.0.lock().unwrap();
+            let path: &str = params.parameters[0]["file:ValidationFile"].as_str().unwrap();
+            let df: ResultPolars<DataFrame>;
+            
+            metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocel Validation {:?}", &id).to_string()));
+            metadata.entry("type".to_string()).or_insert(Value::String("table".to_string()));
+            metadata.entry("type-long".to_string()).or_insert(Value::String("DataFrame".to_string()));
+
+
+            match validate_ocel_verbose(path) {
+                Ok(a) => {
+                    let mut err_reason: Vec<&str> = vec![];
+                    let mut err_location: Vec<&str> = vec![];
+
+
+                    a.iter().for_each(|(reason, location)| {err_reason.push(reason); err_location.push(location)});
+
+                    df = DataFrame::new(vec![Series::new("Error Reason", err_reason), Series::new("Error Location", err_location)]);
+                    let new_table = TableEntity{id, object: df.expect("Data Table Creation went wrong"), metadata, instancedata};
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                },
+                Err(error) => {
+                    return Err(error.to_string());
+                }
+            }
+
+        },
+        _ => {return Err("plugin has not been implemented".to_string());}
     }
-    Err("Plugin has an issue".to_string())
+    Ok(id.to_string())
 }
 
 
@@ -93,6 +125,7 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
     match plugin {
         Plugins::GenerateOcdg => {
             let plug = r#"{
+                "id": 1,
                 "name": "Generate Ocdg",
                 "enumid": "GenerateOcdg",
                 "description": "Generate an Object-Centric Directed Graph with specified relations.",
@@ -105,6 +138,21 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
             let parameters: HashMap<String, Value> = HashMap::from([("multichoice:Relations".to_string(), serde_json::to_value(Relations::iter().map(|rel| format!("{:?}", rel)).collect::<Vec<String>>()).unwrap()), ("header".to_string(), Value::String("General".to_string()))]);
             gen_ocdg.parameters.push(parameters);
             return Some(gen_ocdg);
+        },
+        Plugins::ValidateOcel => {
+            let plug = r#"{
+                "id": 2,
+                "name": "Validate Ocel",
+                "enumid": "ValidateOcel",
+                "description": "Validates the OCEL input file and returns all errors that exist with the document",
+                "type": "Validation",
+                "input": {},
+                "output": {"table": 1},
+                "parameters": [{"header": "General", "file:ValidationFile": ""}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
         },
         _ => None
     }
@@ -121,6 +169,10 @@ impl Entity {
                 instance.entry("instancedata".to_string()).or_insert(Value::Object(ent.instancedata.clone()));
             },
             Entity::Ocdg(ent) => {
+                instance.entry("metadata".to_string()).or_insert(serde_json::Value::Object(ent.metadata.clone()));
+                instance.entry("instancedata".to_string()).or_insert(Value::Object(ent.instancedata.clone()));
+            },
+            Entity::Table(ent) => {
                 instance.entry("metadata".to_string()).or_insert(serde_json::Value::Object(ent.metadata.clone()));
                 instance.entry("instancedata".to_string()).or_insert(Value::Object(ent.instancedata.clone()));
             }
@@ -146,6 +198,14 @@ struct OcelEntity {
 struct OcdgEntity {
     id: usize,
     object: Ocdg,
+    metadata: Map<String, Value>,
+    instancedata: Map<String, Value>
+}
+
+#[derive(Debug)]
+struct TableEntity {
+    id: usize,
+    object: DataFrame,
     metadata: Map<String, Value>,
     instancedata: Map<String, Value>
 }

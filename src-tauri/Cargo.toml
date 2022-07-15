@@ -12,15 +12,16 @@ rust-version = "1.57"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.0.0", features = [] }
+tauri-build = { version = "1.0.4", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "1.0", features = ["api-all"] }
-pmrs = { path = "../../rust-ocel", version = "0.1.0" }
+tauri = { version = "1.0.4", features = ["api-all"] }
+pmrs = { path = "../../process-rust", version = "0.1.0" }
 strum = { version = "0.24", features = ["derive"] }
+polars = "0.22"
 
 [features]
 # by default Tauri runs in production mode

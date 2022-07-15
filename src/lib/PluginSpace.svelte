@@ -3,6 +3,7 @@
     import EntityCard from './EntityCard.svelte';
     import { EntityStore, PluginStore, TemplateEntityStore } from '../stores';
     import { invoke } from '@tauri-apps/api/tauri';
+    import { open } from "@tauri-apps/api/dialog";
     
     let entities;
 
@@ -17,7 +18,7 @@
     $: selected = $PluginStore.find((item: any) => item.selected);
     $: entitiesCount = getEntityTypeCount(entities);
 
-    function translateQuantity(quantity:Number|Array<Number>): String {
+    function translateQuantity(quantity:number|number[]): String {
         if (quantity instanceof Array) {
             if (quantity[1] === Number.MAX_SAFE_INTEGER) {
                 return `${quantity[0]} or more instances required.`
@@ -29,7 +30,7 @@
         }
     }
 
-    function getEntityTypeCount(entities: Array<any>): Object {
+    function getEntityTypeCount(entities: any[]): Object {
         let typeCounter: Object = {};
         
         if (entities) {
@@ -67,6 +68,20 @@
         
     }
 
+    const fileinputselect = (j: number, input_param: string) => {
+        let base_id: string = `${j}:${input_param}`;
+        let properties = {
+            defaultpath: '~/',
+            directory: false,
+            filters: [{extensions: ['jsonocel'], name: "*"}]
+        };
+
+        open(properties).then((file_path) => {
+            let elements = [...document.querySelectorAll(`[id^="${base_id}"]`)];
+            (elements[0] as HTMLInputElement).value = (file_path as string);
+        });
+    }
+
     const activate_plugin = () => {
         /* deep copy */
         let values = {"enumid": selected.enumid, "inputs": {}, "parameters": []};
@@ -90,6 +105,9 @@
                     /* do something different depending on the data type */
                     if (input_type == "multichoice") {
                         param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
+                    } else if (input_type == "file") {
+                        param_input = (elements[0] as HTMLInputElement).value;
+                        console.log(param_input)
                     }
 
                     values.parameters[index][param] = param_input;
@@ -157,17 +175,22 @@
                     <summary>{section["header"]}</summary>
                     {#each Object.entries(section) as [param, choices]}
                         {#if param.split(":")[0] == "multichoice"}
-                        <fieldset>
-                            <legend><b><u>{param.split(":")[1]}</u></b></legend>
-                            <label for="{j}:{param}">
-                                <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
-                            </label>
-                            {#each choices as choice}
-                                <label for="{j}:{param}:{choice}">
-                                    <input type="checkbox" id="{j}:{param}:{choice}" name={choice}> {choice}
+                            <fieldset>
+                                <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                                <label for="{j}:{param}">
+                                    <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
                                 </label>
-                            {/each}
-                        </fieldset>
+                                {#each choices as choice}
+                                    <label for="{j}:{param}:{choice}">
+                                        <input type="checkbox" id="{j}:{param}:{choice}" name={choice}> {choice}
+                                    </label>
+                                {/each}
+                            </fieldset>
+                        {:else if param.split(":")[0] == "file"}
+                            <label for="{j}:{param}">{param.split(":")[1]}
+                                <input type="text" id="{j}:{param}" name="{param}" placeholder="File Path" required>
+                                <button class="contrast outline button-margin" on:click={fileinputselect(j, param)}>Select</button>
+                            </label>
                         {/if}
                         
                     {/each}

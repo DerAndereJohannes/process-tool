@@ -72,13 +72,4 @@
     align-self: auto;
     flex-shrink: 0;
 }
-
-.button-margin {
-    margin-top: 10px;
-    margin-bottom: 0px;
-}
-
-.title-margin {
-    margin-bottom: 10px;
-}
 </style>
