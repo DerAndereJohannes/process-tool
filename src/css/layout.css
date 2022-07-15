@@ -11,7 +11,7 @@ html, body {
     /* padding: calc(var(--spacing)) calc(var(--spacing)); */
     padding: 0;
     border-radius: var(--border-radius);
-    background: var(--code-background-color);
+    /* background: var(--code-background-color); */
     font-size: 87.5%;
     /* text-align: center; */
     margin-top: 20px;
