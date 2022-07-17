@@ -3,15 +3,15 @@
   windows_subsystem = "windows"
 )]
 
-use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path};
-use pmrs::objects::{ocel::{importer::import_ocel, exporter::export_ocel_pretty}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}};
-use polars::prelude::{Series, DataFrame, Result as ResultPolars, NamedFrom};
+use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions};
+use pmrs::{objects::{ocel::{importer::import_ocel, exporter::export_ocel_pretty}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::features::object_point::{object_point_features, ObjectPointConfig, ObjectPoint}};
+use polars::{prelude::{Series, DataFrame, Result as ResultPolars, NamedFrom, CsvWriter}, io::SerWriter};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
 use pmrs::objects::ocel::validator::validate_ocel_verbose;
 use std::str::FromStr;
-use serde_json::{Value, Map};
+use serde_json::{Value, Map, json};
 use std::sync::Mutex;
 use std::fs;
 use chrono::Local;
@@ -29,10 +29,17 @@ enum Entity {
     Table(TableEntity)
 }
 
+enum EntityPrimitive<'a> {
+    Ocel(&'a Ocel),
+    Ocdg(&'a Ocdg),
+    Table(&'a DataFrame)
+}
+
 #[derive(Debug, EnumIter, EnumString)]
 enum Plugins {
     GenerateOcdg,
-    ValidateOcel
+    ValidateOcel,
+    AllObjectPointFeatures
 }
 
 #[derive(Serialize, Deserialize)]
@@ -79,6 +86,7 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                     let relations: Vec<Relations> = relation_array.as_array().unwrap().iter().map(|i| Relations::from_str(i.as_str().unwrap()).unwrap()).collect();
                     let ocdg: Ocdg = generate_ocdg(log, &relations);
                     instancedata.entry("Relations".to_string()).or_insert(relation_array.to_owned());
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Ocdg(&ocdg)));
                     metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocdg {:?}", &id).to_string()));
                     metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string()));
                     metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
@@ -114,7 +122,30 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                 }
             }
 
-        }
+        },
+        Plugins::AllObjectPointFeatures => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let iocdg: usize = params.inputs[&"ocdg".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Entity::Ocdg(ocdg) = &state[&iocdg] {
+                    let params: HashMap<ObjectPoint, Option<Value>> = HashMap::from_iter([(ObjectPoint::UniqueNeighborCount, None), (ObjectPoint::ActivityExistenceCount, None) , (ObjectPoint::ObjectLifetime, None), (ObjectPoint::ObjectEventInteractionOperator, None), (ObjectPoint::ObjectUnitSetRatio, None)]);
+                    let feature_config: ObjectPointConfig = ObjectPointConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
+                    let df: DataFrame = object_point_features(feature_config);
+                    metadata.entry("name".to_string()).or_insert(json!(format!("Object Point Features {:?}", &id)));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.entry("ocdg-used".to_string()).or_insert(json!(ocdg.metadata["name"]));
+                    instancedata.entry("rows".to_string()).or_insert(json!(df.shape().0));
+                    instancedata.entry("columns".to_string()).or_insert(json!(df.shape().1));
+
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table = TableEntity {id, object: df, metadata, instancedata};
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                }
+            }
+        },
     }
     Ok(id.to_string())
 }
@@ -153,7 +184,23 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
             let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
             return Some(val_ocel);
         },
-        _ => None
+        Plugins::AllObjectPointFeatures => {
+        let plug = r#"{
+                "id": 3,
+                "name": "Generate all Object Point Features (oid intersection)",
+                "enumid": "AllObjectPointFeatures",
+                "description": "Generate all object features based on default values. This plugin only returns features of objects that are in both the ocel and ocdg.",
+                "type": "Feature Extraction",
+                "input": {"ocel": 1, "ocdg": 1},
+                "output": {"table": 1},
+                "parameters": []
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+
+            
+        },
     }
 
 }
@@ -209,9 +256,9 @@ pub struct TableEntity {
 
 #[tauri::command]
 fn export_entity(rust_id: usize, filepath: &str, entitystate: tauri::State<EntityState>) -> Result<String, String> {
-    let rust_objs = entitystate.0.lock().unwrap();
+    let mut rust_objs = entitystate.0.lock().unwrap();
 
-    if let Some(entity) = rust_objs.get(&rust_id) {
+    if let Some(entity) = rust_objs.get_mut(&rust_id) {
         match entity {
             Entity::Ocel(ocel) => {
                 match export_ocel_pretty(&ocel.object, filepath) {
@@ -227,8 +274,18 @@ fn export_entity(rust_id: usize, filepath: &str, entitystate: tauri::State<Entit
 
 
             },
-            Entity::Table(_table) => {
-                todo!()
+            Entity::Table(table) => {
+                match OpenOptions::new().create(true).write(true).truncate(true).open(filepath) {
+                    Ok(output_file) => {
+                        CsvWriter::new(output_file)
+                            .has_header(true)
+                            .with_delimiter(b',')
+                            .finish(&mut table.object).unwrap();
+
+                            return Ok(filepath.to_string());
+                    },
+                    Err(e) => {return Err(e.to_string())}
+                }
             }
         }
     }
@@ -263,6 +320,7 @@ fn import_entity(filepath: &str, entitystate: tauri::State<EntityState>) -> Resu
                         metadata.entry("type".to_string()).or_insert(Value::String("ocel".to_string()));
                         metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Event Log".to_string()));
                         metadata.entry("file-type".to_string()).or_insert(Value::String("jsonocel".to_string()));
+                        instancedata.extend(generate_default_instance_data(EntityPrimitive::Ocel(&ocel)));
 
                         let ocel_entity = OcelEntity {id, object: ocel, metadata, instancedata};
 
@@ -283,6 +341,7 @@ fn import_entity(filepath: &str, entitystate: tauri::State<EntityState>) -> Resu
                             metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string())); 
                             metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
                             metadata.entry("file-type".to_string()).or_insert(Value::String("gexfocdg".to_string()));
+                            instancedata.extend(generate_default_instance_data(EntityPrimitive::Ocdg(&ocdg)));
 
                             let ocdg_entity = OcdgEntity {id, object: ocdg, metadata, instancedata};
 
@@ -303,6 +362,46 @@ fn import_entity(filepath: &str, entitystate: tauri::State<EntityState>) -> Resu
         None => {Err("File Extension Fail.".to_string())}
     }
     
+}
+
+fn generate_default_instance_data(entity: EntityPrimitive) -> Vec<(String, Value)> {
+    let mut instancedata: Vec<(String, Value)> = vec![];
+    match entity {
+        EntityPrimitive::Ocel(ocel) => {
+            instancedata.push(("Event #".to_string(), json!(ocel.events.len())));
+            instancedata.push(("Object #".to_string(), json!(ocel.objects.len())));
+            instancedata.push(("Activities".to_string(), json!(ocel.activities)));
+            instancedata.push(("Object Types".to_string(), match ocel.global_log.get("ocel:object-types") {Some(v) => {v.to_owned()}, None => {json!("None?")}}));
+        },
+        EntityPrimitive::Ocdg(ocdg) => {
+            instancedata.push(("Node #".to_string(), json!(ocdg.inodes.len()))); 
+            instancedata.push(("Edge #".to_string(), json!(ocdg.iedges.len()))); 
+        },
+        EntityPrimitive::Table(df) => {
+            instancedata.push(("rows".to_string(), json!(df.shape().0)));
+            instancedata.push(("columns".to_string(), json!(df.shape().1)));
+        }
+    }
+    instancedata
+}
+
+#[tauri::command]
+fn get_view(rust_id: usize, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+    let mut rust_objs = entitystate.0.lock().unwrap();
+
+    if let Some(entity) = rust_objs.get_mut(&rust_id) {
+        match entity {
+            Entity::Ocel(_ocel) => {todo!()},
+            Entity::Ocdg(_ocdg) => {todo!()},
+            Entity::Table(table) => {
+            match serde_json::to_string(&table.object) {
+                Ok(v) => {return Ok(v);},
+                Err(e) => {return Err(e.to_string());}
+                }
+            }
+        }
+    }
+    Err("rust-id does not exist?!".to_string())
 }
 
 #[tauri::command]
@@ -330,7 +429,7 @@ fn main() {
   let context = tauri::generate_context!();
   tauri::Builder::default()
     .manage(EntityState(Default::default()))
-    .invoke_handler(tauri::generate_handler![import_entity, export_entity, get_instance_info, get_plugins, activate_plugin])
+    .invoke_handler(tauri::generate_handler![import_entity, export_entity, get_instance_info, get_plugins, get_view, activate_plugin])
     .menu(tauri::Menu::os_default(&context.package_info().name))
     .run(context)
     .expect("error while running tauri application");
