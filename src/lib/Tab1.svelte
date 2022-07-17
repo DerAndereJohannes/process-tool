@@ -1,10 +1,14 @@
 <script lang="ts">
     import {EntityStore} from '../stores';
     import { save } from '@tauri-apps/api/dialog';
+    import { invoke } from '@tauri-apps/api/tauri';
 
     const exportfile = () => {
         save().then((path) => {
-            console.log(path);
+            invoke("export_entity", { rustId: Number(entity.id), filepath: path }).then((success) => {
+            console.log(success + " was exported successfully");
+
+            }).catch((err) => {console.log(err)});
         });
     }
 

@@ -9,7 +9,7 @@
         let properties = {
             defaultpath: '~/',
             directory: false,
-            filters: [{extensions: ['jsonocel', 'gexf'], name: "*"}]
+            filters: [{extensions: ['jsonocel', 'gexf', 'gexfocdg'], name: "*"}]
         };
         open(properties).then((path) => {
             /* import file */

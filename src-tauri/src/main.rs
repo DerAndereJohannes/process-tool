@@ -4,7 +4,7 @@
 )]
 
 use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path};
-use pmrs::objects::{ocel::importer::import_ocel, ocdg::{Ocdg, generate_ocdg, Relations}};
+use pmrs::objects::{ocel::{importer::import_ocel, exporter::export_ocel_pretty}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}};
 use polars::prelude::{Series, DataFrame, Result as ResultPolars, NamedFrom};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
@@ -114,8 +114,7 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                 }
             }
 
-        },
-        _ => {return Err("plugin has not been implemented".to_string());}
+        }
     }
     Ok(id.to_string())
 }
@@ -186,28 +185,57 @@ impl Entity {
 
 struct EntityState(Mutex<HashMap<usize, Entity>>);
 
-#[derive(Debug)]
-struct OcelEntity {
-    id: usize,
-    object: Ocel,
+pub struct OcelEntity {
+    pub id: usize,
+    pub object: Ocel,
     metadata: Map<String, Value>,
     instancedata: Map<String, Value>
 }
 
-#[derive(Debug)]
-struct OcdgEntity {
-    id: usize,
-    object: Ocdg,
+pub struct OcdgEntity {
+    pub id: usize,
+    pub object: Ocdg,
     metadata: Map<String, Value>,
     instancedata: Map<String, Value>
 }
 
-#[derive(Debug)]
-struct TableEntity {
-    id: usize,
-    object: DataFrame,
+pub struct TableEntity {
+    pub id: usize,
+    pub object: DataFrame,
     metadata: Map<String, Value>,
     instancedata: Map<String, Value>
+}
+
+
+#[tauri::command]
+fn export_entity(rust_id: usize, filepath: &str, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+    let rust_objs = entitystate.0.lock().unwrap();
+
+    if let Some(entity) = rust_objs.get(&rust_id) {
+        match entity {
+            Entity::Ocel(ocel) => {
+                match export_ocel_pretty(&ocel.object, filepath) {
+                    Ok(_) => {return Ok(filepath.to_string())},
+                    Err(e) => {return Err(e.to_string())}
+                }
+            },
+            Entity::Ocdg(ocdg) => {
+                match export_ocdg(&ocdg.object, filepath) {
+                    Ok(_) => {return Ok(filepath.to_string())},
+                    Err(e) => {return Err(e.to_string())}
+                }
+
+
+            },
+            Entity::Table(_table) => {
+                todo!()
+            }
+        }
+    }
+
+    Err("Rust ID could not be found".to_string())
+
+
 }
 
 
@@ -225,19 +253,18 @@ fn import_entity(filepath: &str, entitystate: tauri::State<EntityState>) -> Resu
             let fsmeta: fs::Metadata = fs::metadata(&filepath).unwrap();
             metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
             metadata.entry("name".to_string()).or_insert(Value::String(name.unwrap().to_str().unwrap().to_string()));
-            metadata.entry("time-imported".to_string()).or_insert(Value::String(format!("{:?}", fsmeta.accessed().unwrap())));
+            metadata.entry("time-imported".to_string()).or_insert(Value::String(format!("{}", Local::now())));
             metadata.entry("file-size".to_string()).or_insert(Value::String(fsmeta.len().to_string()));
 
             match e.to_str().unwrap() {
                 "jsonocel" => {
                    match import_ocel(&filepath) {
                        Ok(ocel) => {
-                        let new_ocel = ocel;
                         metadata.entry("type".to_string()).or_insert(Value::String("ocel".to_string()));
                         metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Event Log".to_string()));
                         metadata.entry("file-type".to_string()).or_insert(Value::String("jsonocel".to_string()));
 
-                        let ocel_entity = OcelEntity {id, object: new_ocel, metadata, instancedata};
+                        let ocel_entity = OcelEntity {id, object: ocel, metadata, instancedata};
 
                         let mut state = entitystate.0.lock().unwrap();
                         
@@ -250,8 +277,25 @@ fn import_entity(filepath: &str, entitystate: tauri::State<EntityState>) -> Resu
 
                    }
                 },
-                "gexf" => {
-                    todo!()
+                "gexfocdg"|"gexf" => {
+                    match import_ocdg(&filepath) {
+                        Ok(ocdg) => {
+                            metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string())); 
+                            metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
+                            metadata.entry("file-type".to_string()).or_insert(Value::String("gexfocdg".to_string()));
+
+                            let ocdg_entity = OcdgEntity {id, object: ocdg, metadata, instancedata};
+
+                            let mut state = entitystate.0.lock().unwrap();
+
+                            state.entry(id).or_insert(Entity::Ocdg(ocdg_entity));
+                            Ok(id.to_string())
+                        },
+                        Err(e) => {
+                            Err(format!("{:?} -> {:?}", "File Import Fail", e).to_string())
+                            
+                        }
+                    }
                 }
                 _ => {Err("File Extension Fail.".to_string())},
             }
@@ -286,7 +330,7 @@ fn main() {
   let context = tauri::generate_context!();
   tauri::Builder::default()
     .manage(EntityState(Default::default()))
-    .invoke_handler(tauri::generate_handler![import_entity, get_instance_info, get_plugins, activate_plugin])
+    .invoke_handler(tauri::generate_handler![import_entity, export_entity, get_instance_info, get_plugins, activate_plugin])
     .menu(tauri::Menu::os_default(&context.package_info().name))
     .run(context)
     .expect("error while running tauri application");
