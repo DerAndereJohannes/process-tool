@@ -107,6 +107,8 @@
                         param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
                     } else if (input_type == "file") {
                         param_input = (elements[0] as HTMLInputElement).value;
+                    } else if (input_type == "bool") { 
+                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3])[0];
                         console.log(param_input)
                     }
 
@@ -187,10 +189,23 @@
                                 {/each}
                             </fieldset>
                         {:else if param.split(":")[0] == "file"}
-                            <label for="{j}:{param}">{param.split(":")[1]}
+                            <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                            <label for="{j}:{param}">
                                 <input type="text" id="{j}:{param}" name="{param}" placeholder="File Path" required>
                                 <button class="contrast outline button-margin" on:click={fileinputselect(j, param)}>Select</button>
                             </label>
+                        {:else if param.split(":")[0] == "bool"}
+                            <fieldset>
+                                <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                                <label for="{j}:{param}">
+                                    <label for="{j}:{param}:true">
+                                        <input type="radio" id="{j}:{param}:true" name="{j}:{param}" checked> True
+                                    </label>
+                                    <label for="{j}:{param}:false">
+                                        <input type="radio" id="{j}:{param}:false" name="{j}:{param}"> False
+                                    </label>
+                                </label>
+                            </fieldset>
                         {/if}
                         
                     {/each}

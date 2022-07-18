@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions};
 use pmrs::{objects::{ocel::{importer::import_ocel, exporter::export_ocel_pretty}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::features::object_point::{object_point_features, ObjectPointConfig, ObjectPoint}};
-use polars::{prelude::{Series, DataFrame, Result as ResultPolars, NamedFrom, CsvWriter}, io::SerWriter};
+use polars::{prelude::{Series, DataFrame, NamedFrom, CsvWriter}, io::SerWriter};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
@@ -39,6 +39,7 @@ enum EntityPrimitive<'a> {
 enum Plugins {
     GenerateOcdg,
     ValidateOcel,
+    MergeFeaturesIntoOcel,
     AllObjectPointFeatures
 }
 
@@ -98,7 +99,7 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
         Plugins::ValidateOcel => {
             let mut state = entitystate.0.lock().unwrap();
             let path: &str = params.parameters[0]["file:ValidationFile"].as_str().unwrap();
-            let df: ResultPolars<DataFrame>;
+            let df: DataFrame;
             
             metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocel Validation {:?}", &id).to_string()));
             metadata.entry("type".to_string()).or_insert(Value::String("table".to_string()));
@@ -113,8 +114,10 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
 
                     a.iter().for_each(|(reason, location)| {err_reason.push(reason); err_location.push(location)});
 
-                    df = DataFrame::new(vec![Series::new("Error Reason", err_reason), Series::new("Error Location", err_location)]);
-                    let new_table = TableEntity{id, object: df.expect("Data Table Creation went wrong"), metadata, instancedata};
+                    df = DataFrame::new(vec![Series::new("Error Reason", err_reason), Series::new("Error Location", err_location)]).expect("Data Table Creation went wrong");
+
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table = TableEntity{id, object: df, metadata, instancedata};
                     state.entry(id).or_insert(Entity::Table(new_table));
                 },
                 Err(error) => {
@@ -137,19 +140,54 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                     metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
                     instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
                     instancedata.entry("ocdg-used".to_string()).or_insert(json!(ocdg.metadata["name"]));
-                    instancedata.entry("rows".to_string()).or_insert(json!(df.shape().0));
-                    instancedata.entry("columns".to_string()).or_insert(json!(df.shape().1));
 
                     instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
                     let new_table = TableEntity {id, object: df, metadata, instancedata};
                     state.entry(id).or_insert(Entity::Table(new_table));
                 }
             }
+        }, 
+        Plugins::MergeFeaturesIntoOcel => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let itable: usize = params.inputs[&"table".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Entity::Table(table) = &state[&itable] {
+                    let mut new_ocel = ocel.object.clone();
+                    let df: DataFrame = table.object.clone();
+                    let cols = df.get_columns();
+                    let oids: Vec<&str> = cols[0].utf8().unwrap().into_no_null_iter().collect();
+                    for col_id in 1..cols.len() {
+                        let curr_series = &cols[col_id];
+                        let curr_name = curr_series.name();
+                        curr_series.iter().enumerate().for_each(|(index, value)| {
+                            let oid = ocel.object.object_map.get_by_left(oids[index]).unwrap();
+                            let number_value: Value = (json!(value)).as_object().expect("This can't fail").values().next().expect("This can't fail").to_owned();
+                            new_ocel.objects.get_mut(oid).expect("This can't fail").ovmap.entry(curr_name.to_string()).or_insert(number_value);
+                        });
+                    }
+
+                    metadata.entry("type".to_string()).or_insert(Value::String("ocel".to_string()));
+                    metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Event Log".to_string()));
+                    metadata.entry("file-type".to_string()).or_insert(Value::String("jsonocel".to_string()));
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Ocel(&new_ocel)));
+
+                    let new_ocel: OcelEntity = OcelEntity { id, object: new_ocel, metadata, instancedata };
+                    state.entry(id).or_insert(Entity::Ocel(new_ocel));
+
+                }
+            }
+
+            if let Value::Bool(consume) = params.parameters[0]["bool:ConsumeEntities"] {
+                if consume {
+                    todo!()
+                }
+            }
+
         },
     }
     Ok(id.to_string())
 }
-
 
 fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
     match plugin {
@@ -198,9 +236,24 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
 
             let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
             return Some(val_ocel);
+        },
+        Plugins::MergeFeaturesIntoOcel => {
+        let plug = r#"{
+                "id": 4,
+                "name": "Merge Feature Table into Ocel log",
+                "enumid": "MergeFeaturesIntoOcel",
+                "description": "Merge a feature table into an ocel log. If ConsumeEntities is true, the input objects are consumed to create the merged log. If false, the result is the result of cloning the data.",
+                "type": "Combination",
+                "input": {"ocel": 1, "table": 1},
+                "output": {"ocel": 1},
+                "parameters": [{"header": "General", "bool:ConsumeEntities": true}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
 
             
-        },
+        }
     }
 
 }
@@ -374,8 +427,8 @@ fn generate_default_instance_data(entity: EntityPrimitive) -> Vec<(String, Value
             instancedata.push(("Object Types".to_string(), match ocel.global_log.get("ocel:object-types") {Some(v) => {v.to_owned()}, None => {json!("None?")}}));
         },
         EntityPrimitive::Ocdg(ocdg) => {
-            instancedata.push(("Node #".to_string(), json!(ocdg.inodes.len()))); 
-            instancedata.push(("Edge #".to_string(), json!(ocdg.iedges.len()))); 
+            instancedata.push(("Node #".to_string(), json!(ocdg.net.node_count()))); 
+            instancedata.push(("Edge #".to_string(), json!(ocdg.net.edge_count()))); 
         },
         EntityPrimitive::Table(df) => {
             instancedata.push(("rows".to_string(), json!(df.shape().0)));

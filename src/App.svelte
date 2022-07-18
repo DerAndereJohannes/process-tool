@@ -23,5 +23,6 @@
     justify-items: stretch;
     align-items: stretch;
     height: 100%;
+    width: 100%;
 }
 </style>
