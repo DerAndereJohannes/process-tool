@@ -7,6 +7,8 @@
     
     let entities;
 
+    const WARNING: string = " \u26a0";
+
     
     invoke("get_plugins").then((plugs) => {
         plugs["selected"] = false;
@@ -85,11 +87,19 @@
     const activate_plugin = () => {
         /* deep copy */
         let values = {"enumid": selected.enumid, "inputs": {}, "parameters": []};
+        let missing: string[] = [];
         /* inputs */
         Object.keys(selected.input).forEach((otype: string) => {
             /* get all fitting to object type TODO: only select as many as there are available inputs*/
+            let warning_id: string = otype + ":input";
             let fitting_obj = entities.filter((item: any) => item.metadata["type"] == otype).map((item: any) => item.metadata["rust-id"]);
-            values.inputs[otype] = fitting_obj; 
+            if (fitting_obj.length == selected.input[otype]) {
+                values.inputs[otype] = fitting_obj; 
+                document.getElementById(warning_id).innerHTML = "";
+            } else {
+                missing.push(otype);
+                document.getElementById(warning_id).innerHTML += WARNING;
+            }
         });
 
         /* parameters */
@@ -99,17 +109,30 @@
                 if (param.includes(":")) {
                     let input_type = param.split(":")[0];
                     let base_id = `${index}:${param}`;
+                    let warning_id: string = base_id+":warning"
                     let elements = [...document.querySelectorAll(`[id^="${base_id}"]`)];
                     let param_input: string|number|string[];
 
                     /* do something different depending on the data type */
                     if (input_type == "multichoice") {
                         param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
+                        if (param_input.length == 0) {
+                            missing.push(base_id);
+                            document.getElementById(warning_id).innerHTML += WARNING;
+                        } else {
+                            document.getElementById(warning_id).innerHTML = param.split(":")[1];
+                        }
                     } else if (input_type == "file") {
                         param_input = (elements[0] as HTMLInputElement).value;
                     } else if (input_type == "bool") { 
-                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3])[0];
-                        console.log(param_input)
+                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3]);
+                        if (param_input.length == 0) {
+                            missing.push(base_id);
+                            document.getElementById(warning_id).innerHTML += WARNING;
+                        } else {
+                            param_input = param_input[0];
+                            document.getElementById(warning_id).innerHTML = param.split(":")[1];
+                        }
                     }
 
                     values.parameters[index][param] = param_input;
@@ -117,15 +140,16 @@
             
             });
         });
-
-        /* activate the plugin!!! */
-        invoke("activate_plugin", { params: values }).then((id: number) => {
-            invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
-                                                                message['id'] = message['metadata']['rust-id']; 
-                                                                message['selected'] = false;
-                                                                EntityStore.update(n => [...n, Object(message)]);
-                                                                console.log(message)})
-                                                  }).catch((error: string) => console.log(error));
+        if (missing.length == 0) {
+            /* activate the plugin!!! */
+            invoke("activate_plugin", { params: values }).then((id: number) => {
+                invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
+                                                                    message['id'] = message['metadata']['rust-id']; 
+                                                                    message['selected'] = false;
+                                                                    EntityStore.update(n => [...n, Object(message)]);
+                                                                    console.log(message)})
+                                                      }).catch((error: string) => console.log(error));
+        }
     }
 
 </script>
@@ -155,7 +179,7 @@
             <div>
                 <article class="article-no-margin">
                 <hgroup>
-                    <h4>{type}: {entitiesCount[type] ? entitiesCount[type] : 0} Selected</h4>
+                    <h4>{type}: {entitiesCount[type] ? entitiesCount[type] : 0} Selected <b id="{type}:input"></b></h4>
                     <h5>{translateQuantity(quantity)}</h5>
                 </hgroup>
                 {#each entities as en}
@@ -178,7 +202,7 @@
                     {#each Object.entries(section) as [param, choices]}
                         {#if param.split(":")[0] == "multichoice"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                                <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
                                 <label for="{j}:{param}">
                                     <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
                                 </label>
@@ -189,14 +213,14 @@
                                 {/each}
                             </fieldset>
                         {:else if param.split(":")[0] == "file"}
-                            <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                            <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
                             <label for="{j}:{param}">
                                 <input type="text" id="{j}:{param}" name="{param}" placeholder="File Path" required>
                                 <button class="contrast outline button-margin" on:click={fileinputselect(j, param)}>Select</button>
                             </label>
                         {:else if param.split(":")[0] == "bool"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b></legend>
+                                <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
                                 <label for="{j}:{param}">
                                     <label for="{j}:{param}:true">
                                         <input type="radio" id="{j}:{param}:true" name="{j}:{param}" checked> True
