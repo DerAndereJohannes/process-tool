@@ -85,11 +85,16 @@
     const activate_plugin = () => {
         /* deep copy */
         let values = {"enumid": selected.enumid, "inputs": {}, "parameters": []};
+        let missing: string[] = [];
         /* inputs */
         Object.keys(selected.input).forEach((otype: string) => {
             /* get all fitting to object type TODO: only select as many as there are available inputs*/
             let fitting_obj = entities.filter((item: any) => item.metadata["type"] == otype).map((item: any) => item.metadata["rust-id"]);
-            values.inputs[otype] = fitting_obj; 
+            if (fitting_obj.length == selected.input[otype]) {
+                values.inputs[otype] = fitting_obj; 
+            } else {
+                missing.push(otype);
+            }
         });
 
         /* parameters */
@@ -105,11 +110,18 @@
                     /* do something different depending on the data type */
                     if (input_type == "multichoice") {
                         param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
+                        if (param_input.length == 0) {
+                            missing.push(base_id);
+                        }
                     } else if (input_type == "file") {
                         param_input = (elements[0] as HTMLInputElement).value;
                     } else if (input_type == "bool") { 
-                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3])[0];
-                        console.log(param_input)
+                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3]);
+                        if (param_input.length == 0) {
+                            missing.push(base_id);
+                        } else {
+                            param_input = param_input[0];
+                        }
                     }
 
                     values.parameters[index][param] = param_input;
@@ -117,15 +129,16 @@
             
             });
         });
-
-        /* activate the plugin!!! */
-        invoke("activate_plugin", { params: values }).then((id: number) => {
-            invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
-                                                                message['id'] = message['metadata']['rust-id']; 
-                                                                message['selected'] = false;
-                                                                EntityStore.update(n => [...n, Object(message)]);
-                                                                console.log(message)})
-                                                  }).catch((error: string) => console.log(error));
+        if (missing.length == 0) {
+            /* activate the plugin!!! */
+            invoke("activate_plugin", { params: values }).then((id: number) => {
+                invoke("get_instance_info", { instanceId: Number(id) }).then((message) => {
+                                                                    message['id'] = message['metadata']['rust-id']; 
+                                                                    message['selected'] = false;
+                                                                    EntityStore.update(n => [...n, Object(message)]);
+                                                                    console.log(message)})
+                                                      }).catch((error: string) => console.log(error));
+        }
     }
 
 </script>

@@ -10,6 +10,7 @@ use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
 use pmrs::objects::ocel::validator::validate_ocel_verbose;
+use tauri::Manager;
 use std::str::FromStr;
 use serde_json::{Value, Map, json};
 use std::sync::Mutex;
@@ -35,7 +36,7 @@ enum EntityPrimitive<'a> {
     Table(&'a DataFrame)
 }
 
-#[derive(Debug, EnumIter, EnumString)]
+#[derive(Debug, EnumIter, EnumString, Clone)]
 enum Plugins {
     GenerateOcdg,
     ValidateOcel,
@@ -48,6 +49,7 @@ struct Plugin {
     id: usize,
     name: String,
     description: String,
+    total_steps: u8,
     enumid: String,
     #[serde(alias = "type", rename(serialize = "type"))]
     plugin_type: String,
@@ -65,14 +67,30 @@ struct PluginParameters {
 
 }
 
+#[derive(Serialize, Clone)]
+struct ProgressEmitter<'a>{
+    current_task: &'a str,
+    current_step: u8,
+    total_steps: u8
+}
+
+fn share_progress(current_task: &str, current_step: &mut u8, total_steps: u8, handler: &tauri::AppHandle) { 
+    handler.emit_all("progress", ProgressEmitter {current_task, current_step: *current_step, total_steps}).unwrap();
+    *current_step = *current_step + 1;
+}
+
 #[tauri::command]
-fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntityState>, handler: tauri::AppHandle) -> Result<String, String> {
     let plugin: Plugins = Plugins::from_str(&params.enumid).unwrap();
+    let plugin_info: Plugin = get_plugin_info(plugin.clone()).expect("Plugin was not implemented properly.");
+    let total_steps: u8 = plugin_info.total_steps + 2;
     let id = get_new_id();
+    let mut curr_step: u8 = 1;
     let mut metadata = Map::<String, Value>::new();
     let mut instancedata = Map::<String, Value>::new();
     metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
     metadata.entry("time-created".to_string()).or_insert(Value::String(Local::now().to_string()));
+    share_progress(format!("Starting Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
 
 
     match plugin {
@@ -85,12 +103,14 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                     let log = &ent.object;
                     let relation_array = &params.parameters[0]["multichoice:Relations"];
                     let relations: Vec<Relations> = relation_array.as_array().unwrap().iter().map(|i| Relations::from_str(i.as_str().unwrap()).unwrap()).collect();
+                    share_progress("Generating OCDG", &mut curr_step, total_steps, &handler);
                     let ocdg: Ocdg = generate_ocdg(log, &relations);
                     instancedata.entry("Relations".to_string()).or_insert(relation_array.to_owned());
                     instancedata.extend(generate_default_instance_data(EntityPrimitive::Ocdg(&ocdg)));
                     metadata.entry("name".to_string()).or_insert(Value::String(format!("Ocdg {:?}", &id).to_string()));
                     metadata.entry("type".to_string()).or_insert(Value::String("ocdg".to_string()));
                     metadata.entry("type-long".to_string()).or_insert(Value::String("Object-Centric Directed Graph".to_string()));
+                    share_progress("Storing OCDG", &mut curr_step, total_steps, &handler);
                     let new_ocdg = OcdgEntity {id, object: ocdg, metadata, instancedata};
                     state.entry(id).or_insert(Entity::Ocdg(new_ocdg)); 
 
@@ -106,10 +126,12 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
             metadata.entry("type-long".to_string()).or_insert(Value::String("DataFrame".to_string()));
 
 
+            share_progress("Validating OCEL", &mut curr_step, total_steps, &handler);
             match validate_ocel_verbose(path) {
                 Ok(a) => {
                     let mut err_reason: Vec<&str> = vec![];
                     let mut err_location: Vec<&str> = vec![];
+                    share_progress("Storing Validation Result", &mut curr_step, total_steps, &handler);
 
 
                     a.iter().for_each(|(reason, location)| {err_reason.push(reason); err_location.push(location)});
@@ -134,7 +156,9 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                 if let Entity::Ocdg(ocdg) = &state[&iocdg] {
                     let params: HashMap<ObjectPoint, Option<Value>> = HashMap::from_iter([(ObjectPoint::UniqueNeighborCount, None), (ObjectPoint::ActivityExistenceCount, None) , (ObjectPoint::ObjectLifetime, None), (ObjectPoint::ObjectEventInteractionOperator, None), (ObjectPoint::ObjectUnitSetRatio, None)]);
                     let feature_config: ObjectPointConfig = ObjectPointConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
+                    share_progress("Extracting Object Point Features", &mut curr_step, total_steps, &handler);
                     let df: DataFrame = object_point_features(feature_config);
+                    share_progress("Storing Result as DataFrame", &mut curr_step, total_steps, &handler);
                     metadata.entry("name".to_string()).or_insert(json!(format!("Object Point Features {:?}", &id)));
                     metadata.entry("type".to_string()).or_insert(json!("table"));
                     metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
@@ -153,6 +177,7 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
             let mut state = entitystate.0.lock().unwrap();
             if let Entity::Ocel(ocel) = &state[&iocel] {
                 if let Entity::Table(table) = &state[&itable] {
+                    share_progress("Merging DataFrame into OCEL", &mut curr_step, total_steps, &handler);
                     let mut new_ocel = ocel.object.clone();
                     let df: DataFrame = table.object.clone();
                     let cols = df.get_columns();
@@ -177,6 +202,7 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
 
                 }
             }
+            share_progress("Storing new OCEL log", &mut curr_step, total_steps, &handler);
 
             if let Value::Bool(consume) = params.parameters[0]["bool:ConsumeEntities"] {
                 if consume {
@@ -186,6 +212,8 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
 
         },
     }
+
+    share_progress(format!("Finished Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
     Ok(id.to_string())
 }
 
@@ -195,6 +223,7 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
             let plug = r#"{
                 "id": 1,
                 "name": "Generate Ocdg",
+                "total_steps": 2,
                 "enumid": "GenerateOcdg",
                 "description": "Generate an Object-Centric Directed Graph with specified relations.",
                 "type": "Generation",
@@ -211,6 +240,7 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
             let plug = r#"{
                 "id": 2,
                 "name": "Validate Ocel",
+                "total_steps": 2,
                 "enumid": "ValidateOcel",
                 "description": "Validates the OCEL input file and returns all errors that exist with the document",
                 "type": "Validation",
@@ -226,6 +256,7 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
         let plug = r#"{
                 "id": 3,
                 "name": "Generate all Object Point Features (oid intersection)",
+                "total_steps": 2,
                 "enumid": "AllObjectPointFeatures",
                 "description": "Generate all object features based on default values. This plugin only returns features of objects that are in both the ocel and ocdg.",
                 "type": "Feature Extraction",
@@ -241,6 +272,7 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
         let plug = r#"{
                 "id": 4,
                 "name": "Merge Feature Table into Ocel log",
+                "total_steps": 2,
                 "enumid": "MergeFeaturesIntoOcel",
                 "description": "Merge a feature table into an ocel log. If ConsumeEntities is true, the input objects are consumed to create the merged log. If false, the result is the result of cloning the data.",
                 "type": "Combination",
