@@ -109,7 +109,7 @@
                 if (param.includes(":")) {
                     let input_type = param.split(":")[0];
                     let base_id = `${index}:${param}`;
-                    let warning_id: string = base_id+":warning"
+                    let warning_id: string = "warning:"+base_id
                     let elements = [...document.querySelectorAll(`[id^="${base_id}"]`)];
                     let param_input: string|number|string[];
 
@@ -202,7 +202,7 @@
                     {#each Object.entries(section) as [param, choices]}
                         {#if param.split(":")[0] == "multichoice"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
+                                <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
                                 <label for="{j}:{param}">
                                     <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
                                 </label>
@@ -213,14 +213,14 @@
                                 {/each}
                             </fieldset>
                         {:else if param.split(":")[0] == "file"}
-                            <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
+                            <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
                             <label for="{j}:{param}">
                                 <input type="text" id="{j}:{param}" name="{param}" placeholder="File Path" required>
                                 <button class="contrast outline button-margin" on:click={fileinputselect(j, param)}>Select</button>
                             </label>
                         {:else if param.split(":")[0] == "bool"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b><b id="{j}:{param}:warning"></b></legend>
+                                <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
                                 <label for="{j}:{param}">
                                     <label for="{j}:{param}:true">
                                         <input type="radio" id="{j}:{param}:true" name="{j}:{param}" checked> True
