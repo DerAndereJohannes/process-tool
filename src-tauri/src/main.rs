@@ -3,13 +3,14 @@
   windows_subsystem = "windows"
 )]
 
-use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions};
-use pmrs::{objects::{ocel::{importer::import_ocel, exporter::export_ocel_pretty}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::features::object_point::{object_point_features, ObjectPointConfig, ObjectPoint}};
+use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions, error::Error};
+use pmrs::{objects::{ocel::{importer::import_ocel, exporter::{export_ocel_pretty, generate_ocel_external_repr}, OcelSerde}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::features::object_point::{object_point_features, ObjectPointConfig, ObjectPoint}};
 use polars::{prelude::{Series, DataFrame, NamedFrom, CsvWriter}, io::SerWriter};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
 use pmrs::objects::ocel::Ocel;
 use pmrs::objects::ocel::validator::validate_ocel_verbose;
+use pmrs::objects::ocdg::exporter::generate_ocdg_string;
 use tauri::Manager;
 use std::str::FromStr;
 use serde_json::{Value, Map, json};
@@ -312,6 +313,35 @@ impl Entity {
         instance
 
     }
+
+    fn get_analysis_view(&self) -> Result<String, Box<dyn Error>> {
+        match self {
+            Entity::Ocel(ent) => {
+                if ent.object.object_map.len() < 10 && ent.object.event_map.len() < 100 {
+                    let ocel_repr: OcelSerde = generate_ocel_external_repr(&ent.object);
+                    match serde_json::to_string(&ocel_repr) {
+                        Ok(ent_str) => {return Ok(ent_str);},
+                        Err(e) => {return Err(e.into());}
+                    }
+                }
+            },
+            Entity::Ocdg(ent) => {
+                if ent.object.object_map.len() < 20 { 
+                    return generate_ocdg_string(&ent.object);
+                }
+            },
+            Entity::Table(ent) => {
+                if ent.object.shape().0 < 500 {
+                    match serde_json::to_string(&ent.object) {
+                        Ok(ent_str) => {return Ok(ent_str);},
+                        Err(e) => {return Err(e.into());}
+                    }
+                }
+            }
+        }
+
+        Ok("na".to_string())
+    }
 }
 
 
@@ -338,6 +368,18 @@ pub struct TableEntity {
     instancedata: Map<String, Value>
 }
 
+
+#[tauri::command]
+fn get_analysis_view(rust_id: usize, entitystate: tauri::State<EntityState>) -> Result<String, String> {
+    let rust_objs = entitystate.0.lock().unwrap();
+    if let Some(entity) = rust_objs.get(&rust_id) {
+        match entity.get_analysis_view() {
+            Ok(ent_str) => {return Ok(ent_str);},
+            Err(e) => {return Err(e.to_string());}
+        }
+    }
+    Err(format!("The rust id {} could not be found", rust_id).to_string())
+}
 
 #[tauri::command]
 fn export_entity(rust_id: usize, filepath: &str, entitystate: tauri::State<EntityState>) -> Result<String, String> {
@@ -514,7 +556,7 @@ fn main() {
   let context = tauri::generate_context!();
   tauri::Builder::default()
     .manage(EntityState(Default::default()))
-    .invoke_handler(tauri::generate_handler![import_entity, export_entity, get_instance_info, get_plugins, get_view, activate_plugin])
+    .invoke_handler(tauri::generate_handler![import_entity, export_entity, get_instance_info, get_analysis_view, get_plugins, get_view, activate_plugin])
     .menu(tauri::Menu::os_default(&context.package_info().name))
     .run(context)
     .expect("error while running tauri application");
