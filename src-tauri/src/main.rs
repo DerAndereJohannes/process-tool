@@ -42,7 +42,8 @@ enum Plugins {
     GenerateOcdg,
     ValidateOcel,
     MergeFeaturesIntoOcel,
-    AllObjectPointFeatures
+    AllObjectPointFeatures,
+    UiDemo
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,16 +84,15 @@ fn share_progress(current_task: &str, current_step: &mut u8, total_steps: u8, ha
 #[tauri::command]
 fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntityState>, handler: tauri::AppHandle) -> Result<String, String> {
     let plugin: Plugins = Plugins::from_str(&params.enumid).unwrap();
-    let plugin_info: Plugin = get_plugin_info(plugin.clone()).expect("Plugin was not implemented properly.");
-    let total_steps: u8 = plugin_info.total_steps + 2;
-    let id = get_new_id();
+    let plugin_info: Plugin = get_plugin_info(&plugin).expect("Plugin was not implemented properly.");
     let mut curr_step: u8 = 1;
+    let total_steps: u8 = plugin_info.total_steps + 2;
+    share_progress(format!("Starting Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
+    let id = get_new_id();
     let mut metadata = Map::<String, Value>::new();
     let mut instancedata = Map::<String, Value>::new();
     metadata.entry("rust-id".to_string()).or_insert(Value::String(id.to_string()));
     metadata.entry("time-created".to_string()).or_insert(Value::String(Local::now().to_string()));
-    share_progress(format!("Starting Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
-
 
     match plugin {
         Plugins::GenerateOcdg => {
@@ -212,13 +212,16 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
             }
 
         },
+        Plugins::UiDemo => {
+
+        },
     }
 
     share_progress(format!("Finished Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
     Ok(id.to_string())
 }
 
-fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
+fn get_plugin_info(plugin: &Plugins) -> Option<Plugin> {
     match plugin {
         Plugins::GenerateOcdg => {
             let plug = r#"{
@@ -286,7 +289,23 @@ fn get_plugin_info(plugin:Plugins) -> Option<Plugin> {
             return Some(val_ocel);
 
             
-        }
+        },
+        Plugins::UiDemo => {
+        let plug = r#"{
+                "id": 5,
+                "name": "UI Demo",
+                "total_steps": 0,
+                "enumid": "UiDemo",
+                "description": "Plugin to showcase all the user interface options that are available.",
+                "type": "Demo",
+                "input": {},
+                "output": {},
+                "parameters": [{"header": "General", "string:Normal String": "default input", "number: Number input": 123.321, "multichoice:Multiple Choice!!": ["multiple", "selection", "options"], "bool:boolean selection": false, "file:Select a file!": "", "dropdown:Drop down selection!": ["only", "select", "one"], "slider:slider min,max,step,initial": [0.0, 1.0, 0.01, 0.5]}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        },
     }
 
 }
@@ -542,7 +561,7 @@ fn get_instance_info(instance_id: usize, entitystate: tauri::State<EntityState>)
 fn get_plugins() -> Vec<Plugin> {
     let mut plugvec = vec![];
     for plugin in Plugins::iter() {
-        if let Some(plug) = get_plugin_info(plugin) {
+        if let Some(plug) = get_plugin_info(&plugin) {
             plugvec.push(plug)
         }
     };

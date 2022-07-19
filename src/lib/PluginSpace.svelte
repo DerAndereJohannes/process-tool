@@ -84,7 +84,7 @@
         });
     }
 
-    const activate_plugin = () => {
+    const activate_plugin = async () => {
         /* deep copy */
         let values = {"enumid": selected.enumid, "inputs": {}, "parameters": []};
         let missing: string[] = [];
@@ -116,23 +116,26 @@
                     /* do something different depending on the data type */
                     if (input_type == "multichoice") {
                         param_input = elements.filter((item: any) => item.checked && item.name != "selectall").map((item: any) => item.name);
-                        if (param_input.length == 0) {
-                            missing.push(base_id);
-                            document.getElementById(warning_id).innerHTML += WARNING;
-                        } else {
-                            document.getElementById(warning_id).innerHTML = param.split(":")[1];
-                        }
                     } else if (input_type == "file") {
                         param_input = (elements[0] as HTMLInputElement).value;
                     } else if (input_type == "bool") { 
-                        param_input = elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3]);
-                        if (param_input.length == 0) {
-                            missing.push(base_id);
-                            document.getElementById(warning_id).innerHTML += WARNING;
-                        } else {
-                            param_input = param_input[0];
-                            document.getElementById(warning_id).innerHTML = param.split(":")[1];
-                        }
+                        param_input = JSON.parse(elements.filter((item: any) => item.checked).map((item: any) => item.id.split(":")[3])[0]);
+                    } else if (input_type == "dropdown") {
+                        param_input = elements.filter((item: any) => item).map((item: any) => item.value)[0];
+                    } else if (input_type == "slider") {
+                        param_input = Number(elements.filter((item: any) => item.name == "slider").map((item: any) => item.value)[0]);
+                    } else if (input_type == "number") {
+                        param_input = Number(elements.filter((item: any) => item.name == "numberinput").map((item: any) => item.value)[0]);
+                    } else if (input_type == "string") {
+                        param_input = elements.filter((item: any) => item.name == "textinput").map((item: any) => item.value)[0];
+                    }
+
+                    /* add any error checking */
+                    if (String(param_input).length == 0) {
+                        missing.push(base_id);
+                        document.getElementById(warning_id).innerHTML += WARNING;
+                    } else {
+                        document.getElementById(warning_id).innerHTML = "";
                     }
 
                     values.parameters[index][param] = param_input;
@@ -200,9 +203,11 @@
                 <details open>
                     <summary>{section["header"]}</summary>
                     {#each Object.entries(section) as [param, choices]}
+                        {#if param.split(":")[0] != "header"}
+                        <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
+                        {/if}
                         {#if param.split(":")[0] == "multichoice"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
                                 <label for="{j}:{param}">
                                     <input type="checkbox" id="{j}:{param}" name="selectall" on:click={() => select_all_click(j, param)}> Select all
                                 </label>
@@ -213,24 +218,51 @@
                                 {/each}
                             </fieldset>
                         {:else if param.split(":")[0] == "file"}
-                            <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
-                            <label for="{j}:{param}">
+                            <label for="{j}:{param}" class="side-by-side">
                                 <input type="text" id="{j}:{param}" name="{param}" placeholder="File Path" required>
-                                <button class="contrast outline button-margin" on:click={fileinputselect(j, param)}>Select</button>
+                                <button class="contrast outline" on:click={() => fileinputselect(j, param)}>Select</button>
                             </label>
                         {:else if param.split(":")[0] == "bool"}
                             <fieldset>
-                                <legend><b><u>{param.split(":")[1]}</u></b><b id="warning:{j}:{param}"></b></legend>
                                 <label for="{j}:{param}">
-                                    <label for="{j}:{param}:true">
-                                        <input type="radio" id="{j}:{param}:true" name="{j}:{param}" checked> True
-                                    </label>
-                                    <label for="{j}:{param}:false">
-                                        <input type="radio" id="{j}:{param}:false" name="{j}:{param}"> False
-                                    </label>
+                                    {#if choices === "true"}
+                                        <label for="{j}:{param}:true">
+                                            <input type="radio" id="{j}:{param}:true" name="{j}:{param}" checked> True
+                                        </label>
+                                        <label for="{j}:{param}:false">
+                                            <input type="radio" id="{j}:{param}:false" name="{j}:{param}"> False
+                                        </label>
+                                    {:else}
+                                        <label for="{j}:{param}:true">
+                                            <input type="radio" id="{j}:{param}:true" name="{j}:{param}"> True
+                                        </label>
+                                        <label for="{j}:{param}:false">
+                                            <input type="radio" id="{j}:{param}:false" name="{j}:{param}" checked> False
+                                        </label>
+                                    {/if}
                                 </label>
                             </fieldset>
+                        {:else if param.split(":")[0] == "dropdown"}
+                            <select id="{j}:{param}" required>
+                                {#each choices as choice, l}
+                                    {#if l == 0}
+                                        <option value="{choice}" selected>{choice}</option>
+                                    {:else}
+                                        <option value="{choice}">{choice}</option>
+                                    {/if}
+                                {/each}
+                            </select>
+                        {:else if param.split(":")[0] == "slider"}
+                            <div class="side-by-side">
+                                <input id="{j}:{param}" type="range" min="{choices[0]}" max="{choices[1]}" step="{choices[2]}" value="{choices[3]}" name="slider" on:input={() => document.getElementById("text:" + j + ":" + param).innerHTML = document.getElementById(j + ":" + param).value}>
+                                <b id="text:{j}:{param}" style="text-align: center;">{choices[3]}</b>
+                            </div>
+                        {:else if param.split(":")[0] == "string"}
+                            <input type="text" id="{j}:{param}" name="textinput" placeholder="{choices}">
+                        {:else if param.split(":")[0] == "number"}
+                            <input type="number" id="{j}:{param}" name="numberinput" value={choices}>
                         {/if}
+                        <hr>
                         
                     {/each}
 
@@ -323,6 +355,11 @@
 
 .article-no-margin {
     margin: 0;
+}
+
+.side-by-side {
+    display:grid;
+    grid-template-columns: 80% auto;
 }
 
 </style>
