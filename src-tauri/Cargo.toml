@@ -22,6 +22,7 @@ tauri = { version = "1.0.4", features = ["api-all"] }
 pmrs = { path = "../../pmrs" ,version = "0.0" }
 strum = { version = "0.24", features = ["derive"] }
 polars = { version = "0.22", features = ["serde"] }
+rayon = { version = "1.5" }
 
 [features]
 # by default Tauri runs in production mode

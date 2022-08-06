@@ -3,8 +3,8 @@
   windows_subsystem = "windows"
 )]
 
-use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions, error::Error};
-use pmrs::{objects::{ocel::{importer::import_ocel, exporter::{export_ocel_pretty, generate_ocel_external_repr}, OcelSerde}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::features::object_point::{object_point_features, ObjectPointConfig, ObjectPoint}};
+use std::{collections::{HashMap, HashSet}, sync::atomic::{AtomicUsize, Ordering}, path::Path, fs::OpenOptions, error::Error};
+use pmrs::{objects::{ocel::{importer::import_ocel, exporter::{export_ocel_pretty, generate_ocel_external_repr}, OcelSerde}, ocdg::{Ocdg, generate_ocdg, Relations, importer::import_ocdg, exporter::export_ocdg}}, algo::transformation::ocel::{features::{object_point::{object_point_features, ObjectPointConfig, ObjectPoint}, object_group::{ObjectGroup, ObjectGroupConfig, object_group_features}, event_point::{EventPoint, event_point_features, EventPointConfig}, event_group::{EventGroup, event_group_features, EventGroupConfig}, operator::Operator}, timeseries::{generate_time_series, TimeSeries, auto_timediff_binning}, situations::{object_situations::{ObjectSituations, ObjectSituationParameters}, event_situations::{EventSituations, EventSituationParameters}}}};
 use polars::{prelude::{Series, DataFrame, NamedFrom, CsvWriter}, io::SerWriter};
 use serde::{Serialize, Deserialize};
 use strum::{IntoEnumIterator, EnumIter, EnumString};
@@ -17,6 +17,7 @@ use serde_json::{Value, Map, json};
 use std::sync::Mutex;
 use std::fs;
 use chrono::Local;
+use rayon::prelude::*;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
 
@@ -43,7 +44,13 @@ enum Plugins {
     ValidateOcel,
     MergeFeaturesIntoOcel,
     AllObjectPointFeatures,
-    UiDemo
+    AllObjectGroupFeatures,
+    AllEventPointFeatures,
+    AllEventGroupFeatures,
+    UiDemo,
+    OcelTimeSeries,
+    OcelObjectSituations,
+    OcelEventSituations,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -215,6 +222,306 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
         Plugins::UiDemo => {
 
         },
+        Plugins::OcelTimeSeries => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Value::String(ts_type_str) = &params.parameters[0]["dropdown:SelectSeriesType"] {
+                    let ts_type = TimeSeries::from_str(ts_type_str.as_str()).expect("should never fail");
+                    let binning = auto_timediff_binning(&ocel.object);
+                    share_progress("Generating time series", &mut curr_step, total_steps, &handler);
+                    let series_vec: Vec<f64> = generate_time_series::<f64>(&ocel.object, binning, ts_type);
+                    let series = Series::new(format!("Time Series:{}:{}", ocel.id, ts_type_str).as_str(), series_vec);
+                    share_progress("Storing Result as DataFrame", &mut curr_step, total_steps, &handler);
+                    metadata.entry("name".to_string()).or_insert(json!(format!("{} of {:?}", ts_type_str, ocel.metadata["name"].as_str().unwrap())));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    let df = DataFrame::new(vec![series]).expect("cannot fail!");
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+
+                    let new_table: TableEntity = TableEntity { id, object: df, metadata, instancedata };
+                    state.entry(id).or_insert(Entity::Table(new_table));
+
+                }
+            }
+        
+        },
+        Plugins::OcelObjectSituations => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Some(sit_type_str) = &params.parameters[0]["dropdown:SelectSituationType"].as_str() {
+                    let sit_type = ObjectSituations::from_str(sit_type_str).unwrap();
+                    let mut sit_params = ObjectSituationParameters::default();
+                    let mut target_vec: Vec<Option<Value>> = vec![None; ocel.object.objects.len()];
+                    if let Some(activities) = &params.parameters[0]["string:Activities"].as_str() {
+                        if !activities.is_empty() {
+                            let input_act: HashSet<&str> = HashSet::from_iter(activities.split(";"));
+                            sit_params.activities = Some(input_act);
+                        } 
+                    }
+                   
+                    if let Some(property) = &params.parameters[0]["string:Property"].as_str() {
+                        if !property.is_empty() {
+                            sit_params.property = Some(property);
+                        }
+                    }
+
+                    if let Some(object_types) = &params.parameters[0]["string:ObjectTypes"].as_str() {
+                        if !object_types.is_empty() {
+                            let input_otypes: HashSet<&str> = HashSet::from_iter(object_types.split(";"));
+                            sit_params.object_types = Some(input_otypes);
+                        }
+
+                    }
+
+                    match sit_type {
+                        ObjectSituations::ObjectAttribute | ObjectSituations::ObjectAttributeUnknown => {
+                            if sit_params.property.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Property".to_string());
+                            }
+                        },
+                        ObjectSituations::ObjectMissingActivity | ObjectSituations::ObjectLifetime => {
+                            if sit_params.activities.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Activities".to_string());
+                            }
+                        },
+                        _ => {
+                            return Err("Not yet implemented".to_string());
+                        }
+                    }
+
+                    target_vec.par_iter_mut().enumerate().for_each(|(i, val)| *val = sit_type.execute(&ocel.object, &sit_params, &i));
+                    let target_series: Series = Series::new(format!("{:?}", Plugins::OcelObjectSituations).as_str(), target_vec.iter().map(|val| {
+                        if let Some(exists) = val {
+                            return exists.as_f64()
+                        }
+                        None
+                    }).collect::<Vec<Option<f64>>>());
+                    
+                    let obj_names: Series = (0..ocel.object.objects.len()).map(|i| ocel.object.object_map.get_by_right(&i).unwrap().as_str()).collect();
+                    let df = DataFrame::new(vec![obj_names, target_series]).unwrap();
+                    metadata.entry("name".to_string()).or_insert(json!(format!("{:?} of {:?}", Plugins::OcelObjectSituations, ocel.metadata["name"].as_str().unwrap())));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table: TableEntity = TableEntity { id, object: df, metadata, instancedata };
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                    
+                }
+            }
+        },
+        Plugins::OcelEventSituations => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Some(sit_type_str) = &params.parameters[0]["dropdown:SelectSituationType"].as_str() {
+                    let sit_type = EventSituations::from_str(sit_type_str).unwrap();
+                    let mut sit_params = EventSituationParameters::default();
+                    let mut target_vec: Vec<Option<Value>> = vec![None; ocel.object.events.len()];
+                    if let Some(activities) = &params.parameters[0]["string:Activities"].as_str() {
+                        if !activities.is_empty() {
+                            let input_act: HashSet<&str> = HashSet::from_iter(activities.split(";"));
+                            sit_params.activities = Some(input_act);
+                        } 
+                    }
+                   
+                    if let Some(property) = &params.parameters[0]["string:Property"].as_str() {
+                        if !property.is_empty() {
+                            sit_params.property = Some(property);
+                        }
+                    }
+
+                    if let Some(object_types) = &params.parameters[0]["string:ObjectTypes"].as_str() {
+                        if !object_types.is_empty() {
+                            let input_otypes: HashSet<&str> = HashSet::from_iter(object_types.split(";"));
+                            sit_params.object_types = Some(input_otypes);
+                        }
+                    }
+
+                    let input_relations: Vec<Relations>;
+                    if let Some(relations) = &params.parameters[0]["string:Relations"].as_str() {
+                        if !relations.is_empty() {
+                            input_relations = relations.split(";").into_iter().map(|s| Relations::from_str(s).unwrap()).collect();
+                            sit_params.relations = Some(input_relations.iter().collect());
+                        }
+                    }
+
+                    match sit_type {
+                        EventSituations::EventAttribute | EventSituations::EventAttributeUnknown => {
+                            if sit_params.property.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Property".to_string());
+                            }
+                        },
+                        EventSituations::EventChoice => {
+                            if sit_params.activities.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Activities".to_string());
+                            }
+                        },
+                        EventSituations::EventMissingObjectType => {
+                            if sit_params.object_types.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Activities".to_string());
+                            }
+                        },
+                        EventSituations::EventObjectChoice => {
+                            if sit_params.object_types.is_none() || sit_params.activities.is_none() {
+                                share_progress("Invalid Properties.. Cancelling..", &mut curr_step, total_steps, &handler);
+                                return Err("Invalid Input Activities".to_string());
+                            }
+                        },
+                        _ => {
+                            return Err("Not yet implemented".to_string());
+                        }
+                    }
+
+                    target_vec.par_iter_mut().enumerate().for_each(|(i, val)| *val = sit_type.execute(&ocel.object, &sit_params, &i));
+                    let target_series: Series = Series::new(format!("{:?}", sit_type).as_str(), target_vec.iter().map(|val| {
+                        if let Some(exists) = val {
+                            return exists.as_f64()
+                        }
+                        None
+                    }).collect::<Vec<Option<f64>>>());
+                    
+                    let obj_names: Series = (0..ocel.object.events.len()).map(|i| ocel.object.event_map.get_by_right(&i).unwrap().as_str()).collect();
+                    let df = DataFrame::new(vec![obj_names, target_series]).unwrap();
+                    metadata.entry("name".to_string()).or_insert(json!(format!("{:?} of {:?}", sit_type, ocel.metadata["name"].as_str().unwrap())));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table: TableEntity = TableEntity { id, object: df, metadata, instancedata };
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                }
+            }
+
+        },
+        Plugins::AllEventPointFeatures => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let iocdg: usize = params.inputs[&"ocdg".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Entity::Ocdg(ocdg) = &state[&iocdg] {
+                    let mut params: Vec<(EventPoint, Option<Value>)> = vec![];
+                    
+                    params.push((EventPoint::RelationCreatedCounts, None));
+                    params.push((EventPoint::OmapTypeCounts, None));
+                    params.push((EventPoint::OutputObjectTypeCounts, None));
+                    params.push((EventPoint::InputObjectTypeCounts, None));
+                    params.push((EventPoint::ActivityOhe, None));
+                    
+
+                    // let params: HashMap<ObjectGroup, Option<Value>> = HashMap::from_iter(param_vec);
+                    let feature_config: EventPointConfig = EventPointConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
+                    share_progress("Extracting Event Point Features", &mut curr_step, total_steps, &handler);
+                    let df: DataFrame = event_point_features(feature_config);
+                    share_progress("Storing Result as DataFrame", &mut curr_step, total_steps, &handler);
+                    metadata.entry("name".to_string()).or_insert(json!(format!("Event Point Features {:?}", &id)));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.entry("ocdg-used".to_string()).or_insert(json!(ocdg.metadata["name"]));
+
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table = TableEntity {id, object: df, metadata, instancedata};
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                }
+            }
+
+        }, 
+        Plugins::AllEventGroupFeatures => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let iocdg: usize = params.inputs[&"ocdg".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Entity::Ocdg(ocdg) = &state[&iocdg] {
+                    let all_act: &Vec<String> = &ocel.object.activities;
+                    let all_op: Vec<String> = Operator::iter().map(|op| op.to_string()).collect();
+                    let mut params: Vec<(EventGroup, Option<Value>)> = vec![];
+                    
+                    params.push((EventGroup::ActivityCounts, None));
+
+                    all_op.iter()
+                          .for_each(|op| {
+                              params.push((EventGroup::ActivityObjectTypeOperator, Some(json!({"operator": op}))));
+                              all_act.iter()
+                                     .for_each(|act| {
+                                        params.push((EventGroup::ActivityAttrOperator, Some(json!({"operator": op, "activity": act}))));
+                                        params.push((EventGroup::ActivityWaitTimeOperator, Some(json!({"operator": op, "activity": act}))));
+                                        params.push((EventGroup::ActivityActiveTimeOperator, Some(json!({"operator": op, "activity": act}))));
+                                     });
+                    });
+
+                    // let params: HashMap<ObjectGroup, Option<Value>> = HashMap::from_iter(param_vec);
+                    let feature_config: EventGroupConfig = EventGroupConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
+                    share_progress("Extracting Event Group Features", &mut curr_step, total_steps, &handler);
+                    let df: DataFrame = event_group_features(feature_config);
+                    share_progress("Storing Result as DataFrame", &mut curr_step, total_steps, &handler);
+                    metadata.entry("name".to_string()).or_insert(json!(format!("Event Group Features {:?}", &id)));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.entry("ocdg-used".to_string()).or_insert(json!(ocdg.metadata["name"]));
+
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table = TableEntity {id, object: df, metadata, instancedata};
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                }
+            }
+
+        }, 
+        Plugins::AllObjectGroupFeatures => {
+            let iocel: usize = params.inputs[&"ocel".to_string()][0].parse().unwrap();
+            let iocdg: usize = params.inputs[&"ocdg".to_string()][0].parse().unwrap();
+            let mut state = entitystate.0.lock().unwrap();
+            if let Entity::Ocel(ocel) = &state[&iocel] {
+                if let Entity::Ocdg(ocdg) = &state[&iocdg] {
+                    let obj_types = ocel.object.global_log["ocel:object-types"].as_array().unwrap();
+                    let all_rels: Vec<String> = Relations::iter().map(|rel| rel.to_string()).collect();
+                    let mut params: Vec<(ObjectGroup, Option<Value>)> = vec![];
+                    
+                    // object type count
+                    obj_types.iter().for_each(|ot| params.push((ObjectGroup::ObjectTypeCount, Some(json!({"otype": ot.to_owned()})))));
+                    // root node count
+                    obj_types.iter().for_each(|ot| params.push((ObjectGroup::RootNodeCount, Some(json!({"otype": ot.to_owned()})))));
+                    // leaf node count
+                    obj_types.iter().for_each(|ot| params.push((ObjectGroup::LeafNodeCount, Some(json!({"otype": ot.to_owned()})))));
+                    // ot - ot interaction
+                    obj_types.iter()
+                             .for_each(|ot| {
+                                 obj_types.iter().for_each(|ot2|{
+                                     all_rels.iter().for_each(|rel| {
+                                        params.push((ObjectGroup::OtOtInteractions, Some(json!({"otype1": ot, "otype2": ot2, "relations": rel}))))
+                                     });
+                                 });
+                             });
+
+
+                    // let params: HashMap<ObjectGroup, Option<Value>> = HashMap::from_iter(param_vec);
+                    let feature_config: ObjectGroupConfig = ObjectGroupConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
+                    share_progress("Extracting Object Group Features", &mut curr_step, total_steps, &handler);
+                    let df: DataFrame = object_group_features(feature_config);
+                    share_progress("Storing Result as DataFrame", &mut curr_step, total_steps, &handler);
+                    metadata.entry("name".to_string()).or_insert(json!(format!("Object Group Features {:?}", &id)));
+                    metadata.entry("type".to_string()).or_insert(json!("table"));
+                    metadata.entry("type-long".to_string()).or_insert(json!("DataFrame"));
+                    instancedata.entry("ocel-used".to_string()).or_insert(json!(ocel.metadata["name"]));
+                    instancedata.entry("ocdg-used".to_string()).or_insert(json!(ocdg.metadata["name"]));
+
+                    instancedata.extend(generate_default_instance_data(EntityPrimitive::Table(&df)));
+                    let new_table = TableEntity {id, object: df, metadata, instancedata};
+                    state.entry(id).or_insert(Entity::Table(new_table));
+                }
+            }
+
+        }, 
+        // _ => {},
     }
 
     share_progress(format!("Finished Plugin: {}", plugin_info.name.as_str()).as_str(), &mut curr_step, total_steps, &handler);
@@ -301,6 +608,119 @@ fn get_plugin_info(plugin: &Plugins) -> Option<Plugin> {
                 "input": {},
                 "output": {},
                 "parameters": [{"header": "General", "string:Normal String": "default input", "number: Number input": 123.321, "multichoice:Multiple Choice!!": ["multiple", "selection", "options"], "bool:boolean selection": false, "file:Select a file!": "", "dropdown:Drop down selection!": ["only", "select", "one"], "slider:slider min,max,step,initial": [0.0, 1.0, 0.01, 0.5]}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        },
+        Plugins::OcelTimeSeries => {
+        let plug = r#"{
+                "id": 6,
+                "name": "Generate OCEL Timeseries",
+                "total_steps": 2,
+                "enumid": "OcelTimeSeries",
+                "description": "Generate a time series based on the events in an OCEL.",
+                "type": "Generation",
+                "input": {"ocel": 1},
+                "output": {"table": 1},
+                "parameters": [{"header": "General", 
+                                "dropdown:SelectSeriesType": ["ActivityCount", "ObjectCount", "UniqueObjectCount"]}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        },
+        Plugins::OcelObjectSituations => {
+        let plug = r#"{
+                "id": 7,
+                "name": "Object Situation Targets",
+                "total_steps": 2,
+                "enumid": "OcelObjectSituations",
+                "description": "Gather all object targets that contains a specific set of requirements.",
+                "type": "Generation",
+                "input": {"ocel": 1},
+                "output": {"table": 1},
+                "parameters": [{"header": "General", 
+                                "dropdown:SelectSituationType": ["ObjectAttribute", "ObjectAttributeUnknown", 
+                                                                 "ObjectMissingActivity", "ObjectLifetime", 
+                                                                 "ObjectMissingReachableObjectType"],
+                                "string:Activities": "",
+                                "string:Property": "",
+                                "string:ObjectTypes": ""}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+
+        },
+        Plugins::OcelEventSituations => {
+        let plug = r#"{
+                "id": 8,
+                "name": "Event Situation Targets",
+                "total_steps": 2,
+                "enumid": "OcelEventSituations",
+                "description": "Gather all event targets that contains a specific set of requirements.",
+                "type": "Generation",
+                "input": {"ocel": 1},
+                "output": {"table": 1},
+                "parameters": [{"header": "General", 
+                                "dropdown:SelectSituationType": ["EventChoice", "EventAttribute", 
+                                                                 "EventAttributeUnknown", "EventWait", 
+                                                                 "EventDuration", "EventObjectChoice",
+                                                                 "EventMissingRelation", "EventMissingObjectType"],
+                                "string:Activities": "",
+                                "string:Property": "",
+                                "string:ObjectTypes": "",
+                                "string:Relations": ""}]
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        
+        },
+        Plugins::AllObjectGroupFeatures => {
+        let plug = r#"{
+                "id": 9,
+                "name": "Generate all Object Group Features",
+                "total_steps": 2,
+                "enumid": "AllObjectGroupFeatures",
+                "description": "Generate all global object features based on default values. This plugin only returns features based on objects that are in both the ocel and ocdg.",
+                "type": "Feature Extraction",
+                "input": {"ocel": 1, "ocdg": 1},
+                "output": {"table": 1},
+                "parameters": []
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        },
+        Plugins::AllEventPointFeatures => {
+        let plug = r#"{
+                "id": 10,
+                "name": "Generate all Event Point Features",
+                "total_steps": 2,
+                "enumid": "AllEventPointFeatures",
+                "description": "Generate all point event features based on default values. This plugin only returns features based on events that are in both the ocel and ocdg.",
+                "type": "Feature Extraction",
+                "input": {"ocel": 1, "ocdg": 1},
+                "output": {"table": 1},
+                "parameters": []
+            }"#;
+
+            let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
+            return Some(val_ocel);
+        },
+        Plugins::AllEventGroupFeatures => {
+        let plug = r#"{
+                "id": 11,
+                "name": "Generate all Event Group Features",
+                "total_steps": 2,
+                "enumid": "AllEventGroupFeatures",
+                "description": "Generate all global event features based on default values. This plugin only returns features based on events/objects that are in both the ocel and ocdg.",
+                "type": "Feature Extraction",
+                "input": {"ocel": 1, "ocdg": 1},
+                "output": {"table": 1},
+                "parameters": []
             }"#;
 
             let val_ocel: Plugin = serde_json::from_str(plug).expect("This should never crash");
