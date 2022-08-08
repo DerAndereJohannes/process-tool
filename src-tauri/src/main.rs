@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::fs;
 use chrono::Local;
 use rayon::prelude::*;
+use itertools::Itertools;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
 
@@ -162,7 +163,50 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
             let mut state = entitystate.0.lock().unwrap();
             if let Entity::Ocel(ocel) = &state[&iocel] {
                 if let Entity::Ocdg(ocdg) = &state[&iocdg] {
-                    let params: HashMap<ObjectPoint, Option<Value>> = HashMap::from_iter([(ObjectPoint::UniqueNeighborCount, None), (ObjectPoint::ActivityExistenceCount, None) , (ObjectPoint::ObjectLifetime, None), (ObjectPoint::ObjectEventInteractionOperator, None), (ObjectPoint::ObjectUnitSetRatio, None)]);
+                    // let all_op: Vec<String> = Operator::iter().map(|op| op.to_string()).collect();
+                    // let all_attr_val: &Vec<Value> = ocel.object.global_log.get("ocel:attribute-names").unwrap().as_array().unwrap();
+                    let all_otypes_val: &Vec<Value> = ocel.object.global_log.get("ocel:object-types").unwrap().as_array().unwrap();
+                    let all_rels: Vec<Relations> = Relations::iter().collect();
+
+                    let mut params: Vec<(ObjectPoint, Option<Value>)> = vec![];
+                    params.push((ObjectPoint::UniqueNeighborCount, None));
+                    params.push((ObjectPoint::ActivityExistence, None));
+                    params.push((ObjectPoint::ActivityExistenceCount, None));
+                    params.push((ObjectPoint::ObjectLifetime, None));
+                    params.push((ObjectPoint::ObjectEventInteractionOperator, None));
+                    params.push((ObjectPoint::ObjectUnitSetRatio, None));
+                    params.push((ObjectPoint::ObjectEventsDirectlyFollows, None));
+
+                    // all rels
+                    all_rels.iter()
+                            .for_each(|rel| {
+                                params.push((ObjectPoint::ObjectDirectRelationCount, Some(json!({"relations": format!("{:?}", rel).as_str()}))));
+                            });
+
+                    // double act
+                    ocel.object.activities.iter()
+                                          .cartesian_product(&ocel.object.activities)
+                                          .for_each(|(a1, a2)| {
+                                            params.push((ObjectPoint::ObjectWaitTime, Some(json!({"activity_src": a1, "activity_tar": a2}))));
+                                          });
+
+                    // otypes
+                    all_otypes_val.iter()
+                                  .for_each(|ot| {
+                                    params.push((ObjectPoint::ObjectTypeInteraction, Some(json!({"object_type": ot}))));
+                                  });
+
+
+                    // all_op.iter()
+                    //       .for_each(|op| {
+                    //           all_attr_val.iter()
+                    //                       .for_each(|attr| {
+                    //                           params.push((ObjectPoint::Activi));
+                    //                       });
+                    // });
+
+
+
                     let feature_config: ObjectPointConfig = ObjectPointConfig { ocel: &ocel.object, ocdg: &ocdg.object, params: &params };
                     share_progress("Extracting Object Point Features", &mut curr_step, total_steps, &handler);
                     let df: DataFrame = object_point_features(feature_config);
