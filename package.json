@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "1.0.0-next.30",
-    "@tauri-apps/cli": "^1.0.4",
+    "@tauri-apps/cli": "^1.0.5",
     "@tsconfig/svelte": "^2.0.1",
     "svelte": "^3.44.0",
     "svelte-check": "^2.2.7",
@@ -24,5 +24,11 @@
   "dependencies": {
     "@tauri-apps/api": "^1.0.2",
     "@zerodevx/svelte-json-view": "^0.2.1"
+  },
+  "futuredependencies?": {
+    "graphology": "^0.24.1",
+    "graphology-gexf": "^0.10.2",
+    "graphology-layout": "^0.6.0",
+    "sigma": "^2.3.1"
   }
 }

@@ -21,7 +21,6 @@
     } else {
         $MultiStore = true;
     }
-    console.log($MultiStore)
   }
 </script>
 
