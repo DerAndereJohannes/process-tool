@@ -176,6 +176,8 @@ fn activate_plugin(params: PluginParameters, entitystate: tauri::State<EntitySta
                     params.push((ObjectPoint::ObjectEventInteractionOperator, None));
                     params.push((ObjectPoint::ObjectUnitSetRatio, None));
                     params.push((ObjectPoint::ObjectEventsDirectlyFollows, None));
+                    params.push((ObjectPoint::ObjectInputs, None));
+                    params.push((ObjectPoint::ObjectOutputs, None));
 
                     // all rels
                     all_rels.iter()
@@ -889,7 +891,7 @@ fn export_entity(rust_id: usize, filepath: &str, entitystate: tauri::State<Entit
                     Ok(output_file) => {
                         CsvWriter::new(output_file)
                             .has_header(true)
-                            .with_delimiter(b',')
+                            .with_delimiter(b'|')
                             .finish(&mut table.object).unwrap();
 
                             return Ok(filepath.to_string());
